@@ -1,7 +1,7 @@
 "use strict";
 
 const DRAFT_KEY = "voxcast.project.v2";
-const DRAFT_VERSION = 4;
+const DRAFT_VERSION = 5;
 const DRAFT_DATABASE = "voxcast-local-projects";
 const DRAFT_STORE = "drafts";
 const DRAFT_RECORD = "active";
@@ -9,6 +9,11 @@ const BOOK_SCHEMA = "voxcast-book-project";
 const BOOK_VERSION = 1;
 const MAX_TEXT_FILE_BYTES = 2_000_000;
 const MAX_PROJECT_FILE_BYTES = 12_000_000;
+const ACTIVE_RENDER_JOB_STATUSES = new Set([
+  "queued",
+  "running",
+  "pausing",
+]);
 
 const DEMO_TEXT = `雨敲在旧车站的玻璃顶上。林夏抱紧书包，望向站台尽头。
 
@@ -64,6 +69,12 @@ const state = {
   sourceFile: null,
   draftTimer: null,
   planTimer: null,
+  renderPollTimer: null,
+  renderJob: null,
+  renderJobIds: {},
+  progressiveIndex: -1,
+  progressiveJobId: null,
+  waitingForProgressiveSegment: false,
   book: null,
   characterRegistry: emptyCharacterRegistry(),
 };
@@ -118,7 +129,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     "refreshPlanButton",
     "demoRenderButton",
     "dashscopeRenderButton",
-    "retryRenderButton",
+    "renderJobPanel",
+    "renderJobStatus",
+    "renderProgress",
+    "renderProgressLabel",
+    "playableCount",
+    "progressiveAudio",
+    "playReadyButton",
+    "pauseJobButton",
+    "resumeJobButton",
+    "progressiveNowPlaying",
     "audioResult",
     "audioTitle",
     "resultAudio",
@@ -191,10 +211,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.dashscopeRenderButton.addEventListener("click", () =>
     renderAudio("dashscope"),
   );
-  elements.retryRenderButton.addEventListener("click", () =>
-    renderAudio(state.lastProvider, true),
+  elements.playReadyButton.addEventListener("click", () =>
+    startProgressivePlayback(0),
   );
-  window.addEventListener("beforeunload", stopBrowserPreview);
+  elements.progressiveAudio.addEventListener(
+    "ended",
+    playNextProgressiveSegment,
+  );
+  elements.pauseJobButton.addEventListener("click", pauseRenderJob);
+  elements.resumeJobButton.addEventListener("click", resumeRenderJob);
+  window.addEventListener("beforeunload", () => {
+    window.clearTimeout(state.renderPollTimer);
+    stopBrowserPreview();
+  });
 
   await loadConfig();
   await restoreDraft();
@@ -243,6 +272,7 @@ function updateProviderNotice() {
 }
 
 function loadDemo() {
+  resetAllRenderJobs();
   state.book = null;
   state.characterRegistry = emptyCharacterRegistry();
   renderBookNavigation();
@@ -310,6 +340,7 @@ async function importTextFile(file) {
         `文件有 ${count.toLocaleString()} 字，当前单次最多分析 ${max.toLocaleString()} 字。`,
       );
     }
+    resetAllRenderJobs();
     state.book = null;
     state.characterRegistry = emptyCharacterRegistry();
     renderBookNavigation();
@@ -387,6 +418,7 @@ async function importProjectFile(file) {
 
 function openBookProject(project, sourceFile, successMessage) {
   const normalized = normalizeBookProject(project);
+  resetAllRenderJobs();
   stopBrowserPreview();
   resetAnalysis();
   state.book = normalized;
@@ -567,6 +599,41 @@ function currentChapter() {
   );
 }
 
+function renderContextKey() {
+  return state.book
+    ? `chapter:${state.book.selected_chapter_id}`
+    : "standalone";
+}
+
+function normalizeRenderJobIds(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, jobId]) => [String(key), String(jobId)])
+      .filter(
+        ([key, jobId]) =>
+          key.length <= 160 && /^[a-f0-9]{12}$/.test(jobId),
+      )
+      .slice(0, 500),
+  );
+}
+
+function resetRenderJobView() {
+  window.clearTimeout(state.renderPollTimer);
+  state.renderPollTimer = null;
+  state.renderJob = null;
+  resetProgressivePlayer();
+  if (elements.renderJobPanel) {
+    elements.renderJobPanel.hidden = true;
+    elements.renderJobPanel.removeAttribute("data-status");
+  }
+}
+
+function resetAllRenderJobs() {
+  state.renderJobIds = {};
+  resetRenderJobView();
+}
+
 function saveCurrentChapter() {
   const chapter = currentChapter();
   if (!chapter) return;
@@ -617,6 +684,7 @@ function switchChapter(chapterId) {
     return;
   }
   loadChapter(chapterId);
+  void restoreRenderJobForCurrentContext();
   showMessage(`已切换到“${currentChapter().title}”。`, true);
 }
 
@@ -837,12 +905,12 @@ function updateCounter() {
 
 function resetAnalysis() {
   stopBrowserPreview();
+  resetRenderJobView();
   state.analysis = null;
   state.analysisSourceText = "";
   state.analysisStale = false;
   elements.resultSection.hidden = true;
   elements.audioResult.hidden = true;
-  elements.retryRenderButton.hidden = true;
   elements.renderPlan.textContent =
     "完成角色识别后，这里会显示预计生成内容。";
   closePronunciationEditor();
@@ -944,7 +1012,6 @@ function renderAnalysis() {
   renderPronunciations();
   renderTimeline();
   elements.audioResult.hidden = true;
-  elements.retryRenderButton.hidden = true;
   updateActionAvailability();
 }
 
@@ -1714,10 +1781,14 @@ async function renderSingleSegment(index) {
   }
 }
 
-async function renderAudio(provider, isRetry = false) {
+async function renderAudio(provider) {
   if (!state.analysis) return;
   if (state.analysisStale) {
     showMessage("原文已经变更，请重新分析后再生成。");
+    return;
+  }
+  if (currentRenderJobIsActive()) {
+    showMessage("这一章已经在后台生成，不需要重复提交。");
     return;
   }
   const emptySegment = state.analysis.segments.find((segment) => !segment.text.trim());
@@ -1737,11 +1808,9 @@ async function renderAudio(provider, isRetry = false) {
   setBusy(
     activeButton,
     true,
-    isRetry
-      ? "正在继续未完成内容…"
-      : provider === "dashscope"
-        ? "正在生成多人朗读…"
-        : "正在检查链路…",
+    provider === "dashscope"
+      ? "正在加入后台任务…"
+      : "正在启动链路检查…",
   );
 
   try {
@@ -1761,58 +1830,29 @@ async function renderAudio(provider, isRetry = false) {
       if (!confirmed) return;
     }
 
-    const result = await requestJson("/api/render", {
+    const chapter = currentChapter();
+    const contextKey = renderContextKey();
+    const result = await requestJson("/api/render/jobs", {
       method: "POST",
       body: JSON.stringify({
         analysis: state.analysis,
         provider,
         format: elements.outputFormat.value,
         confirm_cost: provider === "dashscope",
+        chapter_id: chapter?.id || "standalone",
+        chapter_title: chapter?.title || "当前文本",
       }),
     });
-
-    if (result.status === "partial") {
-      elements.audioResult.hidden = true;
-      elements.retryRenderButton.hidden = false;
-      const failed = result.failed_segments
-        .map((item) => item.segment_id)
-        .join("、");
+    state.renderJobIds[contextKey] = result.job_id;
+    applyRenderJob(result);
+    await saveDraft();
+    scheduleRenderJobPoll(result.job_id);
+    if (ACTIVE_RENDER_JOB_STATUSES.has(result.status)) {
       showMessage(
-        `${result.failed_segments.length} 句话暂未完成（${failed}）。` +
-          `已经完成的内容会保留；点击“继续完成未生成的句子”即可。`,
-      );
-    } else {
-      elements.retryRenderButton.hidden = true;
-      elements.audioResult.hidden = false;
-      elements.resultAudio.src = result.audio_url;
-      elements.downloadLink.href = result.audio_url;
-      elements.downloadLink.textContent =
-        `下载 ${result.format.toUpperCase()} ↓`;
-      elements.audioTitle.textContent =
-        provider === "demo" ? "离线链路检查已完成" : "多人有声书已生成";
-      elements.audioMeta.textContent =
-        `${result.segment_count} 句 · ${result.total_characters} 字 · ` +
-        `${result.cache_hits} 句直接复用 · ${result.synthesized_segments} 句新生成`;
-      elements.wavDownloadLink.hidden =
-        result.format !== "mp3" || !result.wav_url;
-      if (!elements.wavDownloadLink.hidden) {
-        elements.wavDownloadLink.href = result.wav_url;
-      }
-      elements.audioResult.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-      if (provider === "dashscope") {
-        elements.resultAudio.play().catch(() => {});
-      }
-      showMessage(
-        result.cache_hits
-          ? `生成完成，其中 ${result.cache_hits} 句话无需重复处理。`
-          : "生成完成。",
+        "已开始后台生成；第一批句子完成后就能播放，刷新页面也会接回进度。",
         true,
       );
     }
-    scheduleRenderPlan(provider);
   } catch (error) {
     showMessage(error.message);
   } finally {
@@ -1826,26 +1866,275 @@ async function renderAudio(provider, isRetry = false) {
   }
 }
 
+function currentRenderJobIsActive() {
+  const jobId = state.renderJobIds[renderContextKey()];
+  return Boolean(
+    jobId &&
+      state.renderJob?.job_id === jobId &&
+      ACTIVE_RENDER_JOB_STATUSES.has(state.renderJob.status),
+  );
+}
+
+function renderJobStatusLabel(job) {
+  const labelsByStatus = {
+    queued: "等待后台开始",
+    running: "正在逐句生成",
+    pausing: "完成当前句后暂停",
+    paused: "生成已暂停",
+    partial: "部分句子需要重试",
+    completed: "章节生成完成",
+    failed: "生成遇到错误",
+    interrupted: "服务器重启后任务已中断",
+  };
+  return labelsByStatus[job.status] || "正在更新任务";
+}
+
+function applyRenderJob(job) {
+  const previousStatus =
+    state.renderJob?.job_id === job.job_id ? state.renderJob.status : null;
+  if (state.progressiveJobId && state.progressiveJobId !== job.job_id) {
+    resetProgressivePlayer();
+  }
+  job.playable_segments = Array.isArray(job.playable_segments)
+    ? job.playable_segments
+    : [];
+  job.failed_segments = Array.isArray(job.failed_segments)
+    ? job.failed_segments
+    : [];
+  state.renderJob = job;
+  state.lastProvider = job.provider || state.lastProvider;
+  elements.renderJobPanel.hidden = false;
+  elements.renderJobPanel.dataset.status = job.status;
+  elements.renderJobStatus.textContent =
+    `${job.chapter_title || "当前章节"} · ${renderJobStatusLabel(job)}`;
+  elements.renderProgress.max = 100;
+  elements.renderProgress.value = Math.max(
+    0,
+    Math.min(100, Number(job.progress_percent) || 0),
+  );
+  const completed = Number(job.completed_segments) || 0;
+  const total = Number(job.total_segments) || 0;
+  elements.renderProgressLabel.textContent = `${completed} / ${total} 句`;
+  elements.playableCount.textContent = job.playable_segments.length
+    ? `${job.playable_segments.length} 句现在可播放`
+    : "正在准备第一句";
+  elements.playReadyButton.disabled = job.playable_segments.length === 0;
+  elements.progressiveAudio.hidden =
+    state.progressiveJobId !== job.job_id ||
+    job.playable_segments.length === 0;
+  elements.pauseJobButton.hidden = !["queued", "running", "pausing"].includes(
+    job.status,
+  );
+  elements.pauseJobButton.disabled = job.status === "pausing";
+  elements.pauseJobButton.textContent =
+    job.status === "pausing" ? "正在暂停…" : "暂停生成";
+  elements.resumeJobButton.hidden =
+    !["paused", "partial", "failed"].includes(job.status) ||
+    job.resumable === false;
+
+  if (
+    state.progressiveJobId === job.job_id &&
+    state.waitingForProgressiveSegment &&
+    job.playable_segments.length > state.progressiveIndex + 1
+  ) {
+    startProgressivePlayback(state.progressiveIndex + 1);
+  }
+
+  if (job.status === "completed" && job.audio_url) {
+    elements.audioResult.hidden = false;
+    elements.resultAudio.src = job.audio_url;
+    elements.downloadLink.href = job.audio_url;
+    elements.downloadLink.textContent =
+      `下载 ${String(job.format || "wav").toUpperCase()} ↓`;
+    elements.audioTitle.textContent =
+      job.provider === "demo" ? "离线链路检查已完成" : "多人有声书已生成";
+    elements.audioMeta.textContent =
+      `${completed} 句 · 后台生成完成，可播放或下载完整章节`;
+    elements.wavDownloadLink.hidden =
+      job.format !== "mp3" || !job.wav_url;
+    if (!elements.wavDownloadLink.hidden) {
+      elements.wavDownloadLink.href = job.wav_url;
+    }
+  } else {
+    elements.audioResult.hidden = true;
+  }
+
+  if (previousStatus !== job.status) {
+    if (job.status === "completed") {
+      showMessage("这一章已经全部生成完成。", true);
+      scheduleRenderPlan(job.provider);
+    } else if (job.status === "paused") {
+      showMessage("生成已暂停，已经完成的句子仍然可以播放。", true);
+    } else if (job.status === "partial") {
+      showMessage(
+        `${job.failed_segments.length} 句话暂未完成；点击“继续生成”只会补缺失内容。`,
+      );
+    } else if (job.status === "failed") {
+      showMessage(job.message || "生成失败，可以稍后继续。");
+    } else if (job.status === "interrupted") {
+      showMessage(job.message || "任务因服务器重启中断，请重新提交章节。");
+    }
+  }
+  updateActionAvailability();
+}
+
+function scheduleRenderJobPoll(jobId, delay = 650) {
+  window.clearTimeout(state.renderPollTimer);
+  if (
+    state.renderJobIds[renderContextKey()] !== jobId ||
+    !ACTIVE_RENDER_JOB_STATUSES.has(state.renderJob?.status)
+  ) {
+    return;
+  }
+  state.renderPollTimer = window.setTimeout(
+    () => void pollRenderJob(jobId),
+    delay,
+  );
+}
+
+async function pollRenderJob(jobId) {
+  if (state.renderJobIds[renderContextKey()] !== jobId) return;
+  try {
+    const job = await requestJson(`/api/render/jobs/${jobId}`);
+    if (state.renderJobIds[renderContextKey()] !== jobId) return;
+    applyRenderJob(job);
+    scheduleRenderJobPoll(jobId);
+  } catch (error) {
+    if (state.renderJobIds[renderContextKey()] === jobId) {
+      delete state.renderJobIds[renderContextKey()];
+      resetRenderJobView();
+      scheduleDraftSave();
+      showMessage(error.message);
+    }
+  }
+}
+
+async function restoreRenderJobForCurrentContext() {
+  const contextKey = renderContextKey();
+  const jobId = state.renderJobIds[contextKey];
+  resetRenderJobView();
+  if (!jobId) return;
+  try {
+    const job = await requestJson(`/api/render/jobs/${jobId}`);
+    if (state.renderJobIds[renderContextKey()] !== jobId) return;
+    applyRenderJob(job);
+    scheduleRenderJobPoll(jobId, 300);
+  } catch {
+    if (state.renderJobIds[contextKey] === jobId) {
+      delete state.renderJobIds[contextKey];
+      scheduleDraftSave();
+    }
+  }
+}
+
+async function pauseRenderJob() {
+  const jobId = state.renderJob?.job_id;
+  if (!jobId) return;
+  setBusy(elements.pauseJobButton, true, "正在请求暂停…");
+  try {
+    const job = await requestJson(`/api/render/jobs/${jobId}/pause`, {
+      method: "POST",
+      body: "{}",
+    });
+    applyRenderJob(job);
+    scheduleRenderJobPoll(jobId, 250);
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    if (state.renderJob?.status !== "pausing") {
+      setBusy(elements.pauseJobButton, false, "暂停生成");
+    }
+  }
+}
+
+async function resumeRenderJob() {
+  const jobId = state.renderJob?.job_id;
+  if (!jobId) return;
+  setBusy(elements.resumeJobButton, true, "正在继续…");
+  try {
+    const job = await requestJson(`/api/render/jobs/${jobId}/resume`, {
+      method: "POST",
+      body: "{}",
+    });
+    applyRenderJob(job);
+    scheduleRenderJobPoll(jobId, 250);
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    setBusy(elements.resumeJobButton, false, "继续生成");
+  }
+}
+
+function resetProgressivePlayer() {
+  state.progressiveIndex = -1;
+  state.progressiveJobId = null;
+  state.waitingForProgressiveSegment = false;
+  elements.progressiveAudio.pause();
+  elements.progressiveAudio.removeAttribute("src");
+  elements.progressiveAudio.load();
+  elements.progressiveAudio.hidden = true;
+  elements.progressiveNowPlaying.textContent =
+    "第一批句子完成后即可播放。";
+}
+
+function startProgressivePlayback(index = 0) {
+  const segments = state.renderJob?.playable_segments || [];
+  if (!segments.length) {
+    showMessage("第一句还在生成，请稍等片刻。");
+    return;
+  }
+  if (index >= segments.length) {
+    state.waitingForProgressiveSegment = ACTIVE_RENDER_JOB_STATUSES.has(
+      state.renderJob.status,
+    );
+    elements.progressiveNowPlaying.textContent =
+      state.waitingForProgressiveSegment
+        ? "已播放完当前内容，正在等待下一句…"
+        : "已播放完这一章当前可用的内容。";
+    return;
+  }
+  const segment = segments[index];
+  state.progressiveIndex = index;
+  state.progressiveJobId = state.renderJob.job_id;
+  state.waitingForProgressiveSegment = false;
+  if (
+    elements.progressiveAudio.getAttribute("src") !== segment.audio_url
+  ) {
+    elements.progressiveAudio.src = segment.audio_url;
+  }
+  elements.progressiveAudio.hidden = false;
+  elements.progressiveNowPlaying.textContent =
+    `正在播放第 ${segment.index} 句 · ${segment.character_name || "待确认角色"}`;
+  elements.progressiveAudio.play().catch(() => {
+    elements.progressiveNowPlaying.textContent =
+      `第 ${segment.index} 句已准备好，请点击播放器开始。`;
+  });
+}
+
+function playNextProgressiveSegment() {
+  startProgressivePlayback(state.progressiveIndex + 1);
+}
+
 function updateActionAvailability() {
   if (!elements.playButton) return;
   const unavailable =
     !state.analysis || state.analysisStale || state.isRendering;
+  const activeRenderJob = currentRenderJobIsActive();
   elements.playButton.disabled = unavailable || state.isSpeaking;
   elements.stopButton.disabled = !state.isSpeaking;
   elements.previewSpeed.disabled = state.isRendering;
-  elements.demoRenderButton.disabled = unavailable;
+  elements.demoRenderButton.disabled = unavailable || activeRenderJob;
   elements.refreshPlanButton.disabled = unavailable;
   elements.dashscopeRenderButton.disabled =
-    unavailable || !state.config?.providers?.dashscope?.ready;
+    unavailable ||
+    activeRenderJob ||
+    !state.config?.providers?.dashscope?.ready;
   elements.addPronunciationButton.disabled =
     !state.analysis || state.isRendering;
   for (const button of elements.scriptTimeline.querySelectorAll(
     ".sentence-button",
   )) {
     button.disabled = unavailable || state.isSpeaking;
-  }
-  if (!elements.retryRenderButton.hidden) {
-    elements.retryRenderButton.disabled = unavailable;
   }
   renderBookNavigation();
 }
@@ -1876,6 +2165,7 @@ async function saveDraft() {
     analysis: state.analysis,
     book: state.book,
     character_registry: state.characterRegistry,
+    render_job_ids: state.renderJobIds,
     saved_at: savedAt,
   };
   try {
@@ -1916,6 +2206,7 @@ async function restoreDraft() {
   try {
     if (!project || typeof project.source_text !== "string") return;
     state.sourceFile = project.source_file || null;
+    state.renderJobIds = normalizeRenderJobIds(project.render_job_ids);
     if (
       project.analyzer_mode &&
       [...elements.analyzerMode.options].some(
@@ -1970,6 +2261,7 @@ async function restoreDraft() {
       }
       renderBookNavigation();
     }
+    await restoreRenderJobForCurrentContext();
     const saved = project.saved_at ? new Date(project.saved_at) : null;
     elements.draftStatus.textContent =
       saved && !Number.isNaN(saved.valueOf())

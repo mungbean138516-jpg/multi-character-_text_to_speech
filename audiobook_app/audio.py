@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import wave
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -252,6 +253,9 @@ def render_audiobook(
     cache_root: Path | None = None,
     max_attempts: int = 2,
     output_format: str = "wav",
+    job_id: str | None = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     if output_format not in {"wav", "mp3"}:
         raise ValueError("输出格式只支持 WAV 或 MP3")
@@ -266,21 +270,30 @@ def render_audiobook(
     spoken_characters = sum(len(item[1].text) for item in prepared)
     max_attempts = max(1, min(int(max_attempts), 3))
 
-    job_id = uuid4().hex[:12]
+    job_id = job_id or uuid4().hex[:12]
+    if not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise ValueError("生成任务 ID 格式错误")
     job_dir = output_root / job_id
     segment_dir = job_dir / "segments"
-    segment_dir.mkdir(parents=True, exist_ok=False)
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    for stale_name in ("audiobook.wav", "audiobook.mp3", "manifest.json"):
+        (job_dir / stale_name).unlink(missing_ok=True)
     audio_paths: list[Path] = []
     manifest_segments: list[dict[str, object]] = []
+    playable_segments: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
     cache_hits = 0
     synthesized_segments = 0
+    paused = False
     for index, (
         display_segment,
         spoken_segment,
         character,
         voice,
     ) in enumerate(prepared, start=1):
+        if should_pause is not None and should_pause():
+            paused = True
+            break
         output_path = segment_dir / f"{index:03d}_{display_segment.id}.wav"
         cache_key = segment_cache_key(provider, spoken_segment, voice)
         cached_path = _cache_path(cache_root, cache_key) if cache_root else None
@@ -344,6 +357,17 @@ def render_audiobook(
                         "error": failure,
                     }
                 )
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "status": "running",
+                            "current_index": index,
+                            "total_segments": len(prepared),
+                            "completed_segments": len(audio_paths),
+                            "failed_segments": len(failures),
+                            "failure": failure,
+                        }
+                    )
                 continue
 
         audio_paths.append(output_path)
@@ -362,11 +386,33 @@ def render_audiobook(
                 "file": output_path.name,
             }
         )
+        playable_segment = {
+            "index": index,
+            "segment_id": display_segment.id,
+            "speaker_id": display_segment.speaker_id,
+            "character_name": character.name,
+            "voice_id": voice.id,
+            "audio_url": (
+                f"/outputs/{job_id}/segments/{output_path.name}"
+            ),
+        }
+        playable_segments.append(playable_segment)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "status": "running",
+                    "current_index": index,
+                    "total_segments": len(prepared),
+                    "completed_segments": len(audio_paths),
+                    "failed_segments": len(failures),
+                    "playable_segment": playable_segment,
+                }
+            )
 
-    status = "partial" if failures else "completed"
+    status = "paused" if paused else ("partial" if failures else "completed")
     final_wav_path: Path | None = None
     final_audio_path: Path | None = None
-    if not failures:
+    if status == "completed":
         final_wav_path = job_dir / "audiobook.wav"
         concatenate_wavs(audio_paths, final_wav_path)
         final_audio_path = final_wav_path
@@ -381,10 +427,13 @@ def render_audiobook(
         "requested_format": output_format,
         "total_characters": total_characters,
         "spoken_characters": spoken_characters,
+        "total_segments": len(prepared),
+        "completed_segments": len(audio_paths),
         "cache_hits": cache_hits,
         "synthesized_segments": synthesized_segments,
         "failed_segments": failures,
         "segments": manifest_segments,
+        "playable_segments": playable_segments,
         "audio_file": final_audio_path.name if final_audio_path else None,
         "wav_file": final_wav_path.name if final_wav_path else None,
     }
@@ -399,10 +448,13 @@ def render_audiobook(
         "total_characters": total_characters,
         "spoken_characters": spoken_characters,
         "segment_count": len(audio_paths),
+        "total_segments": len(prepared),
+        "completed_segments": len(audio_paths),
         "cache_hits": cache_hits,
         "synthesized_segments": synthesized_segments,
         "failed_segments": failures,
-        "retryable": bool(failures),
+        "playable_segments": playable_segments,
+        "retryable": status in {"partial", "paused"},
         "audio_url": (
             f"/outputs/{job_id}/{final_audio_path.name}"
             if final_audio_path
