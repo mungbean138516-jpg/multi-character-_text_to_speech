@@ -36,6 +36,28 @@ class ModelContractTests(unittest.TestCase):
         self.assertTrue(restored.characters[1].locked)
         self.assertTrue(restored.segments[0].locked)
 
+    def test_pronunciation_dictionary_round_trip(self) -> None:
+        analysis = AnalysisResult(
+            characters=[
+                CharacterProfile(
+                    id="narrator",
+                    name="旁白",
+                    voice_id="narrator_f",
+                )
+            ],
+            segments=[
+                ScriptSegment(
+                    id="seg_001",
+                    kind="narration",
+                    text="单老师到了。",
+                    speaker_id="narrator",
+                )
+            ],
+            pronunciations={" 单 ": " 善 ", "忽略": "忽略"},
+        )
+        restored = AnalysisResult.from_dict(analysis.to_dict())
+        self.assertEqual(restored.pronunciations, {"单": "善"})
+
     def test_qwen_alias_merges_into_existing_character(self) -> None:
         baseline = AnalysisResult(
             characters=[

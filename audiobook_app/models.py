@@ -99,6 +99,23 @@ class AnalysisResult:
     segments: list[ScriptSegment]
     analyzer: str = "heuristic-v1"
     warnings: list[str] = field(default_factory=list)
+    pronunciations: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if len(self.pronunciations) > 100:
+            raise ValueError("发音词典最多保存 100 条")
+        normalized: dict[str, str] = {}
+        for source, reading in self.pronunciations.items():
+            source_text = str(source).strip()
+            reading_text = str(reading).strip()
+            if not source_text or not reading_text or source_text == reading_text:
+                continue
+            if len(source_text) > 32:
+                raise ValueError("发音词典的原词最多 32 个字符")
+            if len(reading_text) > 64:
+                raise ValueError("发音词典的朗读写法最多 64 个字符")
+            normalized[source_text] = reading_text
+        self.pronunciations = normalized
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +123,7 @@ class AnalysisResult:
             "segments": [segment.to_dict() for segment in self.segments],
             "analyzer": self.analyzer,
             "warnings": list(self.warnings),
+            "pronunciations": dict(self.pronunciations),
             "summary": {
                 "character_count": max(0, len(self.characters) - 1),
                 "segment_count": len(self.segments),
@@ -120,6 +138,9 @@ class AnalysisResult:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "AnalysisResult":
+        raw_pronunciations = value.get("pronunciations", {})
+        if not isinstance(raw_pronunciations, dict):
+            raw_pronunciations = {}
         return cls(
             characters=[
                 CharacterProfile.from_dict(item)
@@ -130,4 +151,8 @@ class AnalysisResult:
             ],
             analyzer=str(value.get("analyzer", "client-edited")),
             warnings=[str(item) for item in value.get("warnings", [])],
+            pronunciations={
+                str(source): str(reading)
+                for source, reading in raw_pronunciations.items()
+            },
         )

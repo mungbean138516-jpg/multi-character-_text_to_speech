@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 import audiobook_app.server as app_server
 
@@ -84,6 +85,32 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertGreater(first_plan["estimated_requests"], 0)
         self.assertGreater(len(audio), 44)
         self.assertEqual(cached_plan["estimated_requests"], 0)
+
+    def test_auto_analysis_and_single_sentence_render(self) -> None:
+        with patch.object(app_server, "qwen_is_configured", return_value=False):
+            analysis = self.post(
+                "/api/analyze",
+                {
+                    "mode": "auto",
+                    "text": "雨停了。林夏说：“出发吧。”陈默点了点头。",
+                },
+            )
+        target = analysis["segments"][-1]
+        result = self.post(
+            "/api/render/segment",
+            {
+                "provider": "demo",
+                "analysis": analysis,
+                "segment_id": target["id"],
+            },
+        )
+        with urllib.request.urlopen(self.base_url + result["audio_url"]) as response:
+            audio = response.read()
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["segment_id"], target["id"])
+        self.assertEqual(result["segment_count"], 1)
+        self.assertGreater(len(audio), 44)
 
     def test_private_cache_path_is_not_served(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:

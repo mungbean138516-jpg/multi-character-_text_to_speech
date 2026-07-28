@@ -1,7 +1,7 @@
 "use strict";
 
 const DRAFT_KEY = "voxcast.project.v2";
-const DRAFT_VERSION = 2;
+const DRAFT_VERSION = 3;
 const MAX_TEXT_FILE_BYTES = 2_000_000;
 
 const DEMO_TEXT = `雨敲在旧车站的玻璃顶上。林夏抱紧书包，望向站台尽头。
@@ -52,6 +52,9 @@ const state = {
   isSpeaking: false,
   isRendering: false,
   lastProvider: "demo",
+  speechSession: 0,
+  activeSegmentIndex: null,
+  pronunciationSegmentIndex: null,
   sourceFile: null,
   draftTimer: null,
   planTimer: null,
@@ -77,9 +80,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     "analysisSummary",
     "warningList",
     "characterGrid",
+    "pronunciationPanel",
+    "addPronunciationButton",
+    "pronunciationForm",
+    "pronunciationSource",
+    "pronunciationReading",
+    "pronunciationHint",
+    "cancelPronunciationButton",
+    "pronunciationList",
     "scriptTimeline",
     "playButton",
     "stopButton",
+    "previewSpeed",
+    "nowPlaying",
     "providerNotice",
     "outputFormat",
     "renderPlan",
@@ -113,8 +126,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   elements.clearDraftButton.addEventListener("click", clearSavedDraft);
   elements.analyzeButton.addEventListener("click", analyzeText);
-  elements.playButton.addEventListener("click", startBrowserPreview);
-  elements.stopButton.addEventListener("click", stopBrowserPreview);
+  elements.playButton.addEventListener("click", () => startBrowserPreview(0));
+  elements.stopButton.addEventListener("click", () => stopBrowserPreview());
+  elements.previewSpeed.addEventListener("change", () => {
+    scheduleDraftSave();
+    if (state.isSpeaking && state.activeSegmentIndex !== null) {
+      startBrowserPreview(state.activeSegmentIndex);
+    }
+  });
+  elements.addPronunciationButton.addEventListener("click", () =>
+    openPronunciationEditor(),
+  );
+  elements.cancelPronunciationButton.addEventListener(
+    "click",
+    closePronunciationEditor,
+  );
+  elements.pronunciationForm.addEventListener(
+    "submit",
+    savePronunciation,
+  );
   elements.outputFormat.addEventListener("change", () => {
     scheduleDraftSave();
     scheduleRenderPlan();
@@ -156,6 +186,9 @@ async function loadConfig() {
         elements.outputFormat.value = "wav";
       }
     }
+    state.lastProvider = state.config.providers?.dashscope?.ready
+      ? "dashscope"
+      : "demo";
     updateProviderNotice();
   } catch (error) {
     elements.systemStatus.lastChild.textContent = " 服务未连接";
@@ -166,8 +199,12 @@ async function loadConfig() {
 function updateProviderNotice() {
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
   elements.providerNotice.textContent = dashscopeReady
-    ? "百炼已连接：真实合成前会显示未缓存字符、请求数和费用预估。"
-    : "百炼尚未配置：浏览器多人试听、离线缓存和 WAV / MP3 管线仍可运行。";
+    ? "高品质语音服务已就绪，生成前会先显示预计内容和费用。"
+    : "高品质语音服务尚未连接；现在仍可免费完成多人试听和全部纠错。";
+  const label = elements.dashscopeRenderButton.querySelector("span");
+  if (label) {
+    label.textContent = dashscopeReady ? "开始生成" : "高品质语音待连接";
+  }
 }
 
 function loadDemo() {
@@ -180,7 +217,7 @@ function loadDemo() {
   elements.fileMeta.textContent = "原创演示文本 · 内置 UTF-8";
   handleSourceChanged();
   elements.sourceText.focus();
-  showMessage("已载入原创演示片段，可直接点击“开始选角”。", true);
+  showMessage("已载入原创演示片段，可直接点击“自动识别角色”。", true);
 }
 
 function handleTextDragOver(event) {
@@ -307,7 +344,8 @@ function resetAnalysis() {
   elements.audioResult.hidden = true;
   elements.retryRenderButton.hidden = true;
   elements.renderPlan.textContent =
-    "完成选角后，这里会显示未缓存字符、请求数和费用预估。";
+    "完成角色识别后，这里会显示预计生成内容。";
+  closePronunciationEditor();
   updateActionAvailability();
 }
 
@@ -323,7 +361,7 @@ async function analyzeText() {
     return;
   }
 
-  setBusy(elements.analyzeButton, true, "正在拆解角色…");
+  setBusy(elements.analyzeButton, true, "正在识别角色…");
   hideMessage();
   stopBrowserPreview();
   try {
@@ -341,12 +379,12 @@ async function analyzeText() {
     renderAnalysis();
     elements.resultSection.hidden = false;
     scheduleDraftSave();
-    scheduleRenderPlan("demo");
+    scheduleRenderPlan(state.lastProvider);
     elements.resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     showMessage(error.message);
   } finally {
-    setBusy(elements.analyzeButton, false, "开始选角");
+    setBusy(elements.analyzeButton, false, "自动识别角色");
     updateActionAvailability();
   }
 }
@@ -362,6 +400,7 @@ function normalizeAnalysis(analysis) {
     ...segment,
   }));
   analysis.warnings = analysis.warnings || [];
+  analysis.pronunciations = analysis.pronunciations || {};
   recomputeSummary(analysis);
   return analysis;
 }
@@ -392,6 +431,7 @@ function renderAnalysis() {
     .join("");
 
   renderCharacters();
+  renderPronunciations();
   renderTimeline();
   elements.audioResult.hidden = true;
   elements.retryRenderButton.hidden = true;
@@ -403,10 +443,10 @@ function renderAnalysisSummary() {
   const summary = state.analysis.summary;
   const prefix = state.analysisStale
     ? "原文已变更，请重新分析后再试听或生成。"
-    : `识别到 ${summary.character_count} 位人物、${summary.dialogue_count} 句对话，`;
+    : `识别到 ${summary.character_count} 位人物和 ${summary.dialogue_count} 句对话。`;
   const suffix = state.analysisStale
     ? ""
-    : `由 ${state.analysis.analyzer} 生成。黄色与红色项目建议人工确认。`;
+    : " 先试听；不合适的角色和声音都可以直接更换。";
   elements.analysisSummary.textContent = `${prefix}${suffix}`;
   elements.analysisSummary.classList.toggle("stale", state.analysisStale);
 }
@@ -421,6 +461,16 @@ function renderCharacters() {
     const traits = (character.traits || [])
       .map((trait) => `<span class="trait">${escapeHtml(trait)}</span>`)
       .join("");
+    const judgment =
+      character.id === "narrator"
+        ? "叙述者 · 沉稳清晰"
+        : [
+            labels.age[character.age_group],
+            labels.gender[character.gender],
+            (character.traits || [])[0],
+          ]
+            .filter(Boolean)
+            .join(" · ");
     const evidence = (character.evidence || [])[0] || "等待更多文本证据";
     const mergeTargets = state.analysis.characters
       .filter(
@@ -439,44 +489,50 @@ function renderCharacters() {
         <div>
           <input class="character-name" type="text" value="${escapeAttribute(character.name)}"
             ${character.id === "narrator" ? "readonly" : ""} aria-label="角色名" />
-          <span class="character-confidence">
+          <span class="character-judgment">
             <i class="confidence-dot confidence-${confidenceClass}"></i>
-            ${(character.confidence * 100).toFixed(0)}% 识别置信度
+            ${escapeHtml(judgment || "人物特质待确认")}
             <b class="locked-badge" ${character.locked ? "" : "hidden"}>人工锁定</b>
           </span>
         </div>
       </div>
-      <div class="character-fields">
-        <label class="field-label">性别呈现
-          ${buildSelect(labels.gender, character.gender, "gender-select")}
-        </label>
-        <label class="field-label">年龄段
-          ${buildSelect(labels.age, character.age_group, "age-select")}
-        </label>
-        <label class="field-label voice-field">配音声线
+      <div class="voice-picker">
+        <label class="field-label voice-field">默认声音
           ${buildVoiceSelect(character.voice_id)}
         </label>
-        <label class="field-label alias-field">角色别名
-          <input class="alias-input" type="text"
-            value="${escapeAttribute((character.aliases || []).join("，"))}"
-            ${character.id === "narrator" ? "readonly" : ""}
-            placeholder="例如：陈伯，老陈" />
-        </label>
+        <button class="mini-button voice-preview-button" type="button">▶ 试听</button>
       </div>
-      <div class="trait-list">${traits}</div>
-      <p class="evidence">“${escapeHtml(evidence)}”</p>
-      ${
-        character.id === "narrator"
-          ? ""
-          : `<div class="merge-controls">
-              <select class="merge-target" aria-label="合并目标" ${mergeTargets ? "" : "disabled"}>
-                ${mergeTargets || '<option value="">暂无其他角色</option>'}
-              </select>
-              <button class="mini-button merge-button" type="button" ${mergeTargets ? "" : "disabled"}>
-                并入所选角色
-              </button>
-            </div>`
-      }
+      <details class="character-details">
+        <summary>角色信息与别名</summary>
+        <div class="character-fields">
+          <label class="field-label">性别呈现
+            ${buildSelect(labels.gender, character.gender, "gender-select")}
+          </label>
+          <label class="field-label">年龄段
+            ${buildSelect(labels.age, character.age_group, "age-select")}
+          </label>
+          <label class="field-label alias-field">角色别名
+            <input class="alias-input" type="text"
+              value="${escapeAttribute((character.aliases || []).join("，"))}"
+              ${character.id === "narrator" ? "readonly" : ""}
+              placeholder="例如：陈伯，老陈" />
+          </label>
+        </div>
+        <div class="trait-list">${traits}</div>
+        <p class="evidence">判断依据：“${escapeHtml(evidence)}”</p>
+        ${
+          character.id === "narrator"
+            ? ""
+            : `<div class="merge-controls">
+                <select class="merge-target" aria-label="合并目标" ${mergeTargets ? "" : "disabled"}>
+                  ${mergeTargets || '<option value="">暂无其他角色</option>'}
+                </select>
+                <button class="mini-button merge-button" type="button" ${mergeTargets ? "" : "disabled"}>
+                  其实是同一个人
+                </button>
+              </div>`
+        }
+      </details>
     `;
 
     const lockCharacter = () => {
@@ -512,6 +568,9 @@ function renderCharacters() {
       character.voice_id = event.target.value;
       lockCharacter();
     });
+    card
+      .querySelector(".voice-preview-button")
+      .addEventListener("click", () => previewCharacterVoice(character.id));
     if (character.id !== "narrator") {
       card.querySelector(".alias-input").addEventListener("change", (event) => {
         character.aliases = uniqueValues(
@@ -587,6 +646,82 @@ function mergeCharacter(sourceId, targetId) {
   showMessage(`已把“${source.name}”作为“${target.name}”的别名并完成台词迁移。`, true);
 }
 
+function renderPronunciations() {
+  if (!state.analysis) return;
+  const entries = Object.entries(state.analysis.pronunciations || {});
+  if (!entries.length) {
+    elements.pronunciationList.innerHTML =
+      '<span class="pronunciation-empty">还没有发音纠正。也可以先在下方选中文字，再点“这个字读错了”。</span>';
+    return;
+  }
+  elements.pronunciationList.innerHTML = entries
+    .map(
+      ([source, reading]) => `
+        <span class="pronunciation-chip">
+          <b>${escapeHtml(source)}</b><i>→</i>${escapeHtml(reading)}
+          <button type="button" data-source="${escapeAttribute(source)}" aria-label="删除 ${escapeAttribute(source)} 的发音纠正">×</button>
+        </span>
+      `,
+    )
+    .join("");
+  for (const button of elements.pronunciationList.querySelectorAll("button")) {
+    button.addEventListener("click", () => {
+      delete state.analysis.pronunciations[button.dataset.source];
+      renderPronunciations();
+      scheduleDraftSave();
+      scheduleRenderPlan();
+      showMessage("已删除这条全书发音规则。", true);
+    });
+  }
+}
+
+function openPronunciationEditor(segmentIndex = null, selectedText = "") {
+  state.pronunciationSegmentIndex = segmentIndex;
+  elements.pronunciationForm.hidden = false;
+  elements.pronunciationSource.value = selectedText.trim().slice(0, 32);
+  elements.pronunciationReading.value = "";
+  elements.pronunciationHint.textContent =
+    segmentIndex === null
+      ? "保存后会应用到这本书的所有句子，原文显示不变。"
+      : `正在纠正第 ${segmentIndex + 1} 句；保存后同一个词在全书都会照着读。`;
+  elements.pronunciationSource.focus();
+}
+
+function closePronunciationEditor() {
+  state.pronunciationSegmentIndex = null;
+  if (!elements.pronunciationForm) return;
+  elements.pronunciationForm.hidden = true;
+  elements.pronunciationForm.reset();
+}
+
+function savePronunciation(event) {
+  event.preventDefault();
+  if (!state.analysis) return;
+  const source = elements.pronunciationSource.value.trim();
+  const reading = elements.pronunciationReading.value.trim();
+  if (!source || !reading) {
+    showMessage("请同时填写原文里的字词和希望朗读的写法。");
+    return;
+  }
+  if (source === reading) {
+    showMessage("两种写法相同，不需要保存发音纠正。");
+    return;
+  }
+  if (
+    !(source in state.analysis.pronunciations) &&
+    Object.keys(state.analysis.pronunciations).length >= 100
+  ) {
+    showMessage("这本书最多保存 100 条发音规则，请先删除不再需要的规则。");
+    return;
+  }
+  state.analysis.pronunciations[source] = reading;
+  closePronunciationEditor();
+  renderPronunciations();
+  scheduleDraftSave();
+  scheduleRenderPlan();
+  showMessage(`已记住：“${source}”在全书读成“${reading}”。`, true);
+}
+
 function renderTimeline() {
   elements.scriptTimeline.innerHTML = "";
   const characterOptions = state.analysis.characters
@@ -599,20 +734,38 @@ function renderTimeline() {
   for (const [index, segment] of state.analysis.segments.entries()) {
     const row = document.createElement("div");
     row.className = "script-row";
+    row.dataset.segmentIndex = String(index);
+    row.classList.toggle("is-playing", state.activeSegmentIndex === index);
     const confidenceClass = confidenceLevel(segment.confidence);
     row.innerHTML = `
       <span class="segment-index">${String(index + 1).padStart(2, "0")}</span>
-      <select class="script-speaker" aria-label="第 ${index + 1} 段说话人">
-        ${characterOptions}
-      </select>
-      <textarea class="script-text-input" rows="1"
-        aria-label="第 ${index + 1} 段文本">${escapeHtml(segment.text)}</textarea>
-      <div class="segment-meta">
-        ${buildSelect(labels.emotion, segment.emotion, "emotion-select")}
-        <i class="confidence-dot confidence-${confidenceClass}" title="${(
-          segment.confidence * 100
-        ).toFixed(0)}% 置信度"></i>
-        <b class="locked-badge" ${segment.locked ? "" : "hidden"}>人工锁定</b>
+      <div class="script-row-body">
+        <div class="script-row-head">
+          <label class="speaker-field">
+            <span>说话人</span>
+            <select class="script-speaker" aria-label="第 ${index + 1} 句说话人">
+              ${characterOptions}
+            </select>
+          </label>
+          <div class="segment-meta">
+            <label>
+              <span>语气</span>
+              ${buildSelect(labels.emotion, segment.emotion, "emotion-select")}
+            </label>
+            <i class="confidence-dot confidence-${confidenceClass}" title="${(
+              segment.confidence * 100
+            ).toFixed(0)}% 识别把握"></i>
+            <b class="locked-badge" ${segment.locked ? "" : "hidden"}>已确认</b>
+          </div>
+        </div>
+        <textarea class="script-text-input" rows="1"
+          aria-label="第 ${index + 1} 句文本">${escapeHtml(segment.text)}</textarea>
+        <div class="sentence-actions">
+          <button class="sentence-button start-preview-button" type="button">▶ 从这里听</button>
+          <button class="sentence-button wrong-speaker-button" type="button">角色错了</button>
+          <button class="sentence-button pronunciation-button" type="button">这个字读错了</button>
+          <button class="sentence-button segment-render-button" type="button">重做这句</button>
+        </div>
       </div>
     `;
     const select = row.querySelector(".script-speaker");
@@ -634,6 +787,7 @@ function renderTimeline() {
     };
     select.addEventListener("change", () => {
       segment.speaker_id = select.value;
+      row.classList.remove("needs-attention");
       lockSegment();
     });
     textInput.addEventListener("input", () => {
@@ -649,9 +803,36 @@ function renderTimeline() {
       segment.emotion = emotionSelect.value;
       lockSegment();
     });
+    row
+      .querySelector(".start-preview-button")
+      .addEventListener("click", () => startBrowserPreview(index));
+    row
+      .querySelector(".wrong-speaker-button")
+      .addEventListener("click", () => {
+        select.focus();
+        row.classList.add("needs-attention");
+        showMessage("请选择正确的说话人；保存后只需重做这一句。", true);
+      });
+    row
+      .querySelector(".pronunciation-button")
+      .addEventListener("click", () => {
+        const selected = textInput.value.slice(
+          textInput.selectionStart,
+          textInput.selectionEnd,
+        );
+        openPronunciationEditor(index, selected);
+        elements.pronunciationPanel.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    row
+      .querySelector(".segment-render-button")
+      .addEventListener("click", () => renderSingleSegment(index));
     elements.scriptTimeline.appendChild(row);
     autoResizeTextarea(textInput);
   }
+  updateActionAvailability();
 }
 
 function autoResizeTextarea(textarea) {
@@ -687,7 +868,50 @@ function confidenceLevel(confidence) {
   return "low";
 }
 
-async function startBrowserPreview() {
+function previewCharacterVoice(characterId) {
+  const index = state.analysis.segments.findIndex(
+    (segment) => segment.speaker_id === characterId,
+  );
+  if (index < 0) {
+    showMessage("这个角色目前没有台词可供试听。");
+    return;
+  }
+  startBrowserPreview(index, index + 1);
+}
+
+function applyPronunciationsToText(text) {
+  const entries = Object.entries(state.analysis?.pronunciations || {}).sort(
+    ([first], [second]) => second.length - first.length,
+  );
+  if (!entries.length) return text;
+  const readings = Object.fromEntries(entries);
+  const pattern = entries
+    .map(([source]) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  return text.replace(new RegExp(pattern, "gu"), (source) => readings[source]);
+}
+
+function setActiveSegment(index) {
+  state.activeSegmentIndex = index;
+  for (const row of elements.scriptTimeline.querySelectorAll(".script-row")) {
+    row.classList.toggle(
+      "is-playing",
+      Number(row.dataset.segmentIndex) === index,
+    );
+  }
+  const segment = state.analysis.segments[index];
+  const character = state.analysis.characters.find(
+    (candidate) => candidate.id === segment?.speaker_id,
+  );
+  if (!segment) return;
+  elements.nowPlaying.innerHTML = `
+    <span class="now-playing-dot"></span>
+    <b>正在播放 · ${escapeHtml(character?.name || "待确认角色")}</b>
+    <small>${escapeHtml(segment.text.slice(0, 46))}${segment.text.length > 46 ? "…" : ""}</small>
+  `;
+}
+
+async function startBrowserPreview(startIndex = 0, endIndex = null) {
   if (state.analysisStale) {
     showMessage("原文已经变更，请重新分析后再试听。");
     return;
@@ -698,6 +922,7 @@ async function startBrowserPreview() {
   }
   stopBrowserPreview();
   state.isSpeaking = true;
+  const session = state.speechSession;
   updateActionAvailability();
   const characters = new Map(
     state.analysis.characters.map((character) => [character.id, character]),
@@ -709,19 +934,34 @@ async function startBrowserPreview() {
   const chineseVoices = browserVoices.filter((voice) =>
     voice.lang.toLowerCase().startsWith("zh"),
   );
-  let index = 0;
+  let index = Math.max(
+    0,
+    Math.min(startIndex, state.analysis.segments.length - 1),
+  );
+  const stopIndex =
+    endIndex === null
+      ? state.analysis.segments.length
+      : Math.max(index + 1, Math.min(endIndex, state.analysis.segments.length));
 
   const speakNext = () => {
-    if (!state.isSpeaking || index >= state.analysis.segments.length) {
-      stopBrowserPreview();
+    if (!state.isSpeaking || session !== state.speechSession) {
       return;
     }
-    const segment = state.analysis.segments[index++];
+    if (index >= stopIndex) {
+      stopBrowserPreview(true);
+      return;
+    }
+    const segmentIndex = index++;
+    const segment = state.analysis.segments[segmentIndex];
     const character = characters.get(segment.speaker_id);
     const preset = voicePresets.get(character?.voice_id);
-    const utterance = new SpeechSynthesisUtterance(segment.text);
+    const utterance = new SpeechSynthesisUtterance(
+      applyPronunciationsToText(segment.text),
+    );
+    setActiveSegment(segmentIndex);
     utterance.lang = "zh-CN";
-    utterance.rate = preset?.browser_rate || 1;
+    utterance.rate =
+      (preset?.browser_rate || 1) * Number(elements.previewSpeed.value || 1);
     utterance.pitch = preset?.browser_pitch || 1;
     if (chineseVoices.length) {
       const hash = [...(character?.voice_id || "")].reduce(
@@ -737,10 +977,24 @@ async function startBrowserPreview() {
   speakNext();
 }
 
-function stopBrowserPreview() {
+function stopBrowserPreview(finished = false) {
+  state.speechSession += 1;
   state.isSpeaking = false;
+  state.activeSegmentIndex = null;
   if ("speechSynthesis" in window) {
     window.speechSynthesis.cancel();
+  }
+  if (elements.scriptTimeline) {
+    for (const row of elements.scriptTimeline.querySelectorAll(".script-row")) {
+      row.classList.remove("is-playing");
+    }
+  }
+  if (elements.nowPlaying) {
+    elements.nowPlaying.innerHTML = `
+      <span class="now-playing-dot"></span>
+      <b>${finished ? "本次试听已结束" : "尚未开始播放"}</b>
+      <small>点击任意一句的“从这里听”也可以开始</small>
+    `;
   }
   if (elements.playButton) updateActionAvailability();
 }
@@ -787,25 +1041,129 @@ async function refreshRenderPlan(provider = state.lastProvider, showErrors = fal
     if (showErrors) showMessage(error.message);
     return null;
   } finally {
-    if (showErrors) setBusy(elements.refreshPlanButton, false, "刷新预算");
+    if (showErrors) setBusy(elements.refreshPlanButton, false, "重新计算");
   }
 }
 
 function applyRenderPlan(plan) {
+  const isHighQuality = plan.provider === "dashscope";
+  const ready = isHighQuality ? Number(plan.cached_segments) : 0;
+  const remaining = isHighQuality
+    ? Number(plan.estimated_requests)
+    : Number(plan.segments);
+  const remainingCharacters = isHighQuality
+    ? Number(plan.estimated_billable_characters)
+    : Number(plan.billable_characters);
   const cost =
-    plan.estimated_cost_cny === null || plan.estimated_cost_cny === undefined
-      ? "单价未配置"
-      : `约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}`;
-  const providerLabel =
-    plan.provider === "dashscope" ? "百炼真实合成" : "离线检测";
+    !isHighQuality ||
+    plan.estimated_cost_cny === null ||
+    plan.estimated_cost_cny === undefined
+      ? ""
+      : `<span><strong>约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}</strong> 预计费用</span>`;
+  const note =
+    isHighQuality
+      ? remaining
+        ? `已有 ${ready} 句准备好；实际费用以最终账单为准。`
+        : "所有句子都已准备好，再次生成不会重复制作声音。"
+      : "现在可以先免费试听；连接高品质语音服务后即可生成可下载成片。";
   elements.renderPlan.innerHTML = `
-    <span><b>${escapeHtml(providerLabel)}</b> 本次计划</span>
-    <span><strong>${Number(plan.estimated_requests).toLocaleString()}</strong> 次新请求</span>
-    <span><strong>${Number(plan.estimated_billable_characters).toLocaleString()}</strong> 个未缓存字符</span>
-    <span><strong>${Number(plan.cached_segments).toLocaleString()}</strong> 段命中缓存</span>
-    <span><strong>${escapeHtml(cost)}</strong></span>
-    <small>${escapeHtml(plan.note || "")}</small>
+    <span><strong>${Number(plan.segments).toLocaleString()}</strong> 句朗读内容</span>
+    <span><strong>${remainingCharacters.toLocaleString()}</strong> 字待生成</span>
+    <span><strong>${ready.toLocaleString()}</strong> 句已准备</span>
+    ${cost}
+    <small>${escapeHtml(note)}</small>
   `;
+}
+
+function singleSegmentAnalysis(index) {
+  return {
+    ...state.analysis,
+    segments: [state.analysis.segments[index]],
+  };
+}
+
+async function renderSingleSegment(index) {
+  if (!state.analysis || state.analysisStale) {
+    showMessage("请先重新识别角色，再修改这句话。");
+    return;
+  }
+  if (!state.config?.providers?.dashscope?.ready) {
+    startBrowserPreview(index, index + 1);
+    showMessage(
+      "高品质语音服务尚未连接，已先用设备声音试听这句；连接后同一按钮会只重新生成这一句。",
+      true,
+    );
+    return;
+  }
+  const segment = state.analysis.segments[index];
+  const row = elements.scriptTimeline.querySelector(
+    `.script-row[data-segment-index="${index}"]`,
+  );
+  const button = row?.querySelector(".segment-render-button");
+  if (!segment?.text.trim() || !button) return;
+
+  state.isRendering = true;
+  updateActionAvailability();
+  setBusy(button, true, "正在重做…");
+  hideMessage();
+  try {
+    const analysis = singleSegmentAnalysis(index);
+    const plan = await requestJson("/api/render/plan", {
+      method: "POST",
+      body: JSON.stringify({ analysis, provider: "dashscope" }),
+    });
+    if (Number(plan.estimated_requests) > 0) {
+      const cost =
+        plan.estimated_cost_cny === null ||
+        plan.estimated_cost_cny === undefined
+          ? "当前未显示单价"
+          : `预计约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}`;
+      if (
+        !window.confirm(
+          `只重新生成第 ${index + 1} 句，共约 ` +
+            `${plan.estimated_billable_characters} 个字，${cost}。确认继续吗？`,
+        )
+      ) {
+        return;
+      }
+    }
+    const result = await requestJson("/api/render/segment", {
+      method: "POST",
+      body: JSON.stringify({
+        analysis: state.analysis,
+        segment_id: segment.id,
+        provider: "dashscope",
+        confirm_cost: true,
+      }),
+    });
+    if (result.status !== "completed" || !result.audio_url) {
+      throw new Error("这句话暂时没有生成成功，请稍后再试。");
+    }
+    const character = state.analysis.characters.find(
+      (candidate) => candidate.id === segment.speaker_id,
+    );
+    elements.audioResult.hidden = false;
+    elements.resultAudio.src = result.audio_url;
+    elements.downloadLink.href = result.audio_url;
+    elements.downloadLink.textContent = "下载本句 WAV ↓";
+    elements.wavDownloadLink.hidden = true;
+    elements.audioTitle.textContent =
+      `${character?.name || "待确认角色"} · 第 ${index + 1} 句已重做`;
+    elements.audioMeta.textContent =
+      result.cache_hits > 0
+        ? "直接使用了已准备好的版本"
+        : "只生成了这一句；下次生成全书时会直接复用";
+    elements.resultAudio.play().catch(() => {});
+    elements.audioResult.scrollIntoView({ behavior: "smooth", block: "center" });
+    showMessage("这句话已重新生成，其他句子没有重复处理。", true);
+    scheduleRenderPlan("dashscope");
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    state.isRendering = false;
+    setBusy(button, false, "重做这句");
+    updateActionAvailability();
+  }
 }
 
 async function renderAudio(provider, isRetry = false) {
@@ -832,15 +1190,15 @@ async function renderAudio(provider, isRetry = false) {
     activeButton,
     true,
     isRetry
-      ? "正在重试失败片段…"
+      ? "正在继续未完成内容…"
       : provider === "dashscope"
-        ? "正在真实合成…"
-        : "正在拼接…",
+        ? "正在生成多人朗读…"
+        : "正在检查链路…",
   );
 
   try {
     const plan = await refreshRenderPlan(provider, false);
-    if (!plan) throw new Error("无法生成调用预算，请稍后重试。");
+    if (!plan) throw new Error("暂时无法估算本次生成内容，请稍后重试。");
     if (provider === "dashscope") {
       const cost =
         plan.estimated_cost_cny === null ||
@@ -848,9 +1206,9 @@ async function renderAudio(provider, isRetry = false) {
           ? "当前未配置单价"
           : `估算约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}`;
       const confirmed = window.confirm(
-        `将向百炼提交 ${plan.estimated_requests} 个未缓存片段，` +
-          `约 ${plan.estimated_billable_characters} 个计费字符，${cost}。` +
-          `实际费用以供应商账单为准。确认继续吗？`,
+        `将生成 ${plan.estimated_requests} 句新内容，` +
+          `约 ${plan.estimated_billable_characters} 个字，${cost}。` +
+          `实际费用以最终账单为准。确认继续吗？`,
       );
       if (!confirmed) return;
     }
@@ -872,8 +1230,8 @@ async function renderAudio(provider, isRetry = false) {
         .map((item) => item.segment_id)
         .join("、");
       showMessage(
-        `${result.failed_segments.length} 个片段生成失败（${failed}）。` +
-          `成功片段已缓存；点击“仅重试失败片段”不会重复调用成功部分。`,
+        `${result.failed_segments.length} 句话暂未完成（${failed}）。` +
+          `已经完成的内容会保留；点击“继续完成未生成的句子”即可。`,
       );
     } else {
       elements.retryRenderButton.hidden = true;
@@ -883,10 +1241,10 @@ async function renderAudio(provider, isRetry = false) {
       elements.downloadLink.textContent =
         `下载 ${result.format.toUpperCase()} ↓`;
       elements.audioTitle.textContent =
-        provider === "demo" ? "离线链路检测音已生成" : "多角色试听已生成";
+        provider === "demo" ? "离线链路检查已完成" : "多人有声书已生成";
       elements.audioMeta.textContent =
-        `${result.segment_count} 个片段 · ${result.total_characters} 字 · ` +
-        `${result.cache_hits} 段复用缓存 · ${result.synthesized_segments} 段新生成`;
+        `${result.segment_count} 句 · ${result.total_characters} 字 · ` +
+        `${result.cache_hits} 句直接复用 · ${result.synthesized_segments} 句新生成`;
       elements.wavDownloadLink.hidden =
         result.format !== "mp3" || !result.wav_url;
       if (!elements.wavDownloadLink.hidden) {
@@ -901,7 +1259,7 @@ async function renderAudio(provider, isRetry = false) {
       }
       showMessage(
         result.cache_hits
-          ? `生成完成，其中 ${result.cache_hits} 个片段直接复用了缓存。`
+          ? `生成完成，其中 ${result.cache_hits} 句话无需重复处理。`
           : "生成完成。",
         true,
       );
@@ -914,7 +1272,7 @@ async function renderAudio(provider, isRetry = false) {
     setBusy(
       activeButton,
       false,
-      provider === "dashscope" ? "百炼真实合成" : "生成离线链路检测音",
+      provider === "dashscope" ? "开始生成" : "运行离线链路检查",
     );
     updateActionAvailability();
   }
@@ -925,10 +1283,19 @@ function updateActionAvailability() {
   const unavailable =
     !state.analysis || state.analysisStale || state.isRendering;
   elements.playButton.disabled = unavailable || state.isSpeaking;
+  elements.stopButton.disabled = !state.isSpeaking;
+  elements.previewSpeed.disabled = state.isRendering;
   elements.demoRenderButton.disabled = unavailable;
   elements.refreshPlanButton.disabled = unavailable;
   elements.dashscopeRenderButton.disabled =
     unavailable || !state.config?.providers?.dashscope?.ready;
+  elements.addPronunciationButton.disabled =
+    !state.analysis || state.isRendering;
+  for (const button of elements.scriptTimeline.querySelectorAll(
+    ".sentence-button",
+  )) {
+    button.disabled = unavailable || state.isSpeaking;
+  }
   if (!elements.retryRenderButton.hidden) {
     elements.retryRenderButton.disabled = unavailable;
   }
@@ -954,6 +1321,7 @@ function saveDraft() {
     source_file: state.sourceFile,
     analyzer_mode: elements.analyzerMode.value,
     output_format: elements.outputFormat.value,
+    preview_speed: elements.previewSpeed.value,
     analysis_source_text: state.analysisSourceText,
     analysis: state.analysis,
     saved_at: savedAt,
@@ -998,6 +1366,14 @@ function restoreDraft() {
       )
     ) {
       elements.outputFormat.value = project.output_format;
+    }
+    if (
+      project.preview_speed &&
+      [...elements.previewSpeed.options].some(
+        (option) => option.value === project.preview_speed,
+      )
+    ) {
+      elements.previewSpeed.value = project.preview_speed;
     }
     if (project.analysis) {
       state.analysis = normalizeAnalysis(project.analysis);

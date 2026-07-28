@@ -39,11 +39,11 @@
 
     <main>
       <section class="hero">
-        <div class="eyebrow"><span>AI CASTING ENGINE</span> · 小说不该只有一个声音</div>
+        <div class="eyebrow"><span>AI 多人朗读</span> · 小说不该只有一个声音</div>
         <h1>让每个角色，<em>真正开口。</em></h1>
         <p>
-          粘贴或导入一段小说，AI 自动拆出旁白与对话、识别人物特质、分配适合的声线。
-          你可以先纠错和换角，再生成一段真正有角色感的多人听书。
+          把小说放进来，系统会自动认出旁白和人物，为每个人分配不同声音。
+          你只需试听、确认，然后开始听。
         </p>
         <div class="pipeline" aria-label="工作流程">
           <span class="pipeline-step active"><b>01</b> 文本</span>
@@ -59,10 +59,10 @@
       <section class="workspace-card input-card">
         <div class="card-heading">
           <div>
-            <span class="section-number">01</span>
+              <span class="section-number">01</span>
             <div>
-              <h2>放入小说片段</h2>
-              <p>首版建议一次使用 500–4,000 字；支持 “ ”、「 」和『 』对话。</p>
+              <h2>把你想听的小说放进来</h2>
+              <p>粘贴文字，或导入 TXT；请只上传自有、获授权或公版内容。</p>
             </div>
           </div>
           <div class="input-source-actions">
@@ -97,19 +97,23 @@
         <div class="input-footer">
           <span id="characterCounter">0 / 50,000 字</span>
           <div class="input-actions">
-            <label class="inline-field">
-              <span>分析方式</span>
-              <select id="analyzerMode">
-                <option value="local">本地规则 · 免费</option>
-                <option value="qwen">千问增强 · 更懂指代</option>
-              </select>
-            </label>
             <button id="analyzeButton" class="primary-button" type="button">
-              <span>开始选角</span>
+              <span>自动识别角色</span>
               <b>→</b>
             </button>
           </div>
         </div>
+        <details class="advanced-settings">
+          <summary>高级设置</summary>
+          <label class="inline-field">
+            <span>角色识别方式</span>
+            <select id="analyzerMode">
+              <option value="auto" selected>自动（推荐）</option>
+              <option value="local">仅用本机规则</option>
+              <option value="qwen">千问增强</option>
+            </select>
+          </label>
+        </details>
       </section>
 
       <div id="messageBox" class="message-box" role="status" hidden></div>
@@ -117,39 +121,76 @@
       <section id="resultSection" hidden>
         <div class="result-intro">
           <div>
-            <span class="section-number">02</span>
+              <span class="section-number">02</span>
             <div>
-              <h2>AI 选角台</h2>
+              <h2>系统已经为你选好角色</h2>
               <p id="analysisSummary">等待分析结果。</p>
             </div>
           </div>
-          <div class="legend">
-            <span><i class="confidence-high"></i> 高置信度</span>
-            <span><i class="confidence-medium"></i> 建议确认</span>
-            <span><i class="confidence-low"></i> 需要纠错</span>
-          </div>
+          <span class="autosave-note">修改会自动保存在这台设备</span>
         </div>
 
         <div id="warningList" class="warning-list" hidden></div>
         <div id="characterGrid" class="character-grid"></div>
+
+        <section id="pronunciationPanel" class="pronunciation-panel">
+          <div class="pronunciation-heading">
+            <div>
+              <strong>全书发音记忆</strong>
+              <span>人名、多音字纠正一次，后面的句子都会照着读，原文不会被改写。</span>
+            </div>
+            <button id="addPronunciationButton" class="secondary-button compact" type="button">
+              ＋ 添加发音
+            </button>
+          </div>
+          <form id="pronunciationForm" class="pronunciation-form" hidden>
+            <label>
+              <span>原文里的字词</span>
+              <input id="pronunciationSource" type="text" maxlength="32" placeholder="例如：单雄信" />
+            </label>
+            <span class="pronunciation-arrow">读成</span>
+            <label>
+              <span>希望朗读的写法</span>
+              <input id="pronunciationReading" type="text" maxlength="64" placeholder="例如：善雄信" />
+            </label>
+            <button class="primary-button compact" type="submit"><span>保存</span></button>
+            <button id="cancelPronunciationButton" class="text-button subtle" type="button">取消</button>
+            <small id="pronunciationHint">可填同音汉字或供应商能正确朗读的写法。</small>
+          </form>
+          <div id="pronunciationList" class="pronunciation-list"></div>
+        </section>
 
         <section class="workspace-card script-card">
           <div class="card-heading">
             <div>
               <span class="section-number">03</span>
               <div>
-                <h2>台词轨道</h2>
-                <p>AI 先完成初稿；说话人不对时，直接在这一行改掉。</p>
+                <h2>检查朗读脚本</h2>
+                <p>发现串台或错音时，直接在对应句子上纠正。</p>
               </div>
             </div>
             <div class="preview-actions">
+              <label class="inline-field preview-speed-field">
+                <span>倍速</span>
+                <select id="previewSpeed">
+                  <option value="0.8">0.8×</option>
+                  <option value="1" selected>1.0×</option>
+                  <option value="1.25">1.25×</option>
+                  <option value="1.5">1.5×</option>
+                </select>
+              </label>
               <button id="playButton" class="secondary-button" type="button">
-                ▶ 浏览器多人试听
+                ▶ 从头试听
               </button>
               <button id="stopButton" class="icon-button" type="button" title="停止试听">
                 ■
               </button>
             </div>
+          </div>
+          <div id="nowPlaying" class="now-playing" aria-live="polite">
+            <span class="now-playing-dot"></span>
+            <b>尚未开始播放</b>
+            <small>点击任意一句的“从这里听”也可以开始</small>
           </div>
           <div id="scriptTimeline" class="script-timeline"></div>
         </section>
@@ -158,39 +199,45 @@
           <div class="render-copy">
             <span class="section-number">04</span>
             <div>
-              <h2>生成试听成片</h2>
+              <h2>生成多人有声书</h2>
               <p>
-                先用离线诊断音检查“逐句生成 → 拼接 → 下载”链路；配置百炼后可生成真实语音。
+                确认角色和声音后开始生成。以后只改一句，也只需重新生成那一句。
               </p>
               <div id="providerNotice" class="provider-notice"></div>
             </div>
           </div>
           <div class="render-actions">
-            <label class="inline-field output-field">
-              <span>导出</span>
-              <select id="outputFormat">
-                <option value="wav">WAV 无损</option>
-                <option value="mp3">MP3 128 kbps</option>
-              </select>
-            </label>
-            <button id="demoRenderButton" class="secondary-button wide" type="button">
-              <span>生成离线链路检测音</span>
-            </button>
             <button id="dashscopeRenderButton" class="primary-button wide" type="button">
-              <span>百炼真实合成</span><b>✦</b>
+              <span>开始生成</span><b>✦</b>
             </button>
           </div>
           <div id="renderPlan" class="render-plan">
-            完成选角后，这里会显示未缓存字符、请求数和费用预估。
+            完成角色识别后，这里会显示预计生成内容。
           </div>
-          <div class="retry-row">
-            <button id="refreshPlanButton" class="text-button subtle" type="button">
-              刷新预算
-            </button>
+          <div class="retry-row" id="retryRow">
             <button id="retryRenderButton" class="secondary-button" type="button" hidden>
-              仅重试失败片段
+              继续完成未生成的句子
             </button>
           </div>
+          <details class="render-advanced">
+            <summary>导出与开发检查</summary>
+            <div class="render-advanced-body">
+              <label class="inline-field output-field">
+                <span>导出格式</span>
+                <select id="outputFormat">
+                  <option value="wav">WAV 无损</option>
+                  <option value="mp3">MP3 128 kbps</option>
+                </select>
+              </label>
+              <button id="refreshPlanButton" class="text-button subtle" type="button">
+                重新计算
+              </button>
+              <button id="demoRenderButton" class="secondary-button compact" type="button">
+                <span>运行离线链路检查</span>
+              </button>
+              <p>离线检查只会生成可区分的测试音，不是实际朗读成片。</p>
+            </div>
+          </details>
           <div id="audioResult" class="audio-result" hidden>
             <div>
               <span class="audio-icon">◉</span>
@@ -211,16 +258,16 @@
       </section>
 
       <section class="trust-strip">
-        <div><strong>文本有据</strong><span>每个角色保留识别证据与置信度</span></div>
-        <div><strong>人工可控</strong><span>角色、台词归属和声线都能修改</span></div>
-        <div><strong>密钥后置</strong><span>API Key 只在服务端环境变量中使用</span></div>
+        <div><strong>自动认人</strong><span>从上下文判断旁白、对白和人物特质</span></div>
+        <div><strong>纠错很轻</strong><span>改角色、发音或声音，不必学习音频编辑</span></div>
+        <div><strong>角色一致</strong><span>别名合并后，同一人物始终使用同一声音</span></div>
         <div><strong>版权优先</strong><span>仅处理自有、授权或公版文本</span></div>
       </section>
     </main>
 
     <footer>
-      <span>声场 VoxCast · Alpha 0.2</span>
-      <span>AI 辅助选角，最终决定权始终属于创作者。</span>
+      <span>声场 VoxCast · Alpha 0.3</span>
+      <span>AI 自动选角，你随时可以纠正。</span>
     </footer>
 
     <script src="/app.js" defer></script>

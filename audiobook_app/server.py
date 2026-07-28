@@ -64,7 +64,7 @@ def _provider_for_name(name: str):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.2"
+    server_version = "MultiVoiceAudiobook/0.3"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -102,12 +102,19 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.2.0"})
+            self._send_json({"status": "ok", "version": "0.3.0"})
             return
         if path == "/api/config":
             self._send_json(
                 {
                     "analyzers": {
+                        "auto": {
+                            "ready": True,
+                            "label": "自动识别（推荐）",
+                            "selected": (
+                                "qwen" if qwen_is_configured() else "local"
+                            ),
+                        },
                         "local": {"ready": True, "label": "本地规则（免费）"},
                         "qwen": {
                             "ready": qwen_is_configured(),
@@ -141,6 +148,10 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "render_characters": MAX_RENDER_CHARACTERS,
                         "render_segments": MAX_RENDER_SEGMENTS,
                     },
+                    "features": {
+                        "pronunciation_dictionary": True,
+                        "single_segment_render": True,
+                    },
                 }
             )
             return
@@ -157,6 +168,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 self._handle_analyze(payload)
             elif path == "/api/render/plan":
                 self._handle_render_plan(payload)
+            elif path == "/api/render/segment":
+                self._handle_render_segment(payload)
             elif path == "/api/render":
                 self._handle_render(payload)
             else:
@@ -194,7 +207,9 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("请先粘贴小说文本")
         if len(text) > MAX_ANALYZE_CHARACTERS:
             raise ValueError(f"单次最多分析 {MAX_ANALYZE_CHARACTERS} 个字符")
-        mode = str(payload.get("mode", "local"))
+        mode = str(payload.get("mode", "auto"))
+        if mode == "auto":
+            mode = "qwen" if qwen_is_configured() else "local"
         if mode == "qwen":
             analysis = QwenNovelAnalyzer().analyze(text)
         elif mode == "local":
@@ -249,6 +264,47 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             max_attempts=TTS_MAX_ATTEMPTS,
             output_format=output_format,
         )
+        self._send_json(result, HTTPStatus.CREATED)
+
+    def _handle_render_segment(self, payload: dict[str, Any]) -> None:
+        analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
+        segment_id = str(payload.get("segment_id", "")).strip()
+        if not segment_id:
+            raise ValueError("缺少要重新生成的句子")
+        selected_segment = next(
+            (
+                segment
+                for segment in analysis.segments
+                if segment.id == segment_id
+            ),
+            None,
+        )
+        if selected_segment is None:
+            raise ValueError("找不到要重新生成的句子")
+
+        provider_name = str(payload.get("provider", "demo"))
+        if provider_name == "dashscope" and payload.get("confirm_cost") is not True:
+            raise ValueError("调用付费 TTS 前需要确认可能产生费用")
+        provider = _provider_for_name(provider_name)
+        single_analysis = AnalysisResult(
+            characters=analysis.characters,
+            segments=[selected_segment],
+            analyzer=analysis.analyzer,
+            pronunciations=analysis.pronunciations,
+        )
+        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        result = render_audiobook(
+            single_analysis,
+            provider,
+            OUTPUT_ROOT,
+            max_characters=MAX_RENDER_CHARACTERS,
+            max_segments=1,
+            cache_root=CACHE_ROOT,
+            max_attempts=TTS_MAX_ATTEMPTS,
+            output_format="wav",
+        )
+        result["segment_id"] = selected_segment.id
+        result["speaker_id"] = selected_segment.speaker_id
         self._send_json(result, HTTPStatus.CREATED)
 
     def _serve_static(self, request_path: str) -> None:
