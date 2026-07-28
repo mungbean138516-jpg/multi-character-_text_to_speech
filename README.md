@@ -178,3 +178,6 @@ PPT 暂未制作，等系统版本与团队分工确认后再从真实 Demo 截�
 - [Qoder 使用记录](docs/QODER_LOG.md)
 - [贡献指南](CONTRIBUTING.md)
 
+
+## Git Test
+Testing write access from Keming-Hu.
