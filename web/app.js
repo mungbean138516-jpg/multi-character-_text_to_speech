@@ -1,8 +1,14 @@
 "use strict";
 
 const DRAFT_KEY = "voxcast.project.v2";
-const DRAFT_VERSION = 3;
+const DRAFT_VERSION = 4;
+const DRAFT_DATABASE = "voxcast-local-projects";
+const DRAFT_STORE = "drafts";
+const DRAFT_RECORD = "active";
+const BOOK_SCHEMA = "voxcast-book-project";
+const BOOK_VERSION = 1;
 const MAX_TEXT_FILE_BYTES = 2_000_000;
+const MAX_PROJECT_FILE_BYTES = 12_000_000;
 
 const DEMO_TEXT = `雨敲在旧车站的玻璃顶上。林夏抱紧书包，望向站台尽头。
 
@@ -58,6 +64,8 @@ const state = {
   sourceFile: null,
   draftTimer: null,
   planTimer: null,
+  book: null,
+  characterRegistry: emptyCharacterRegistry(),
 };
 
 const elements = {};
@@ -71,6 +79,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     "loadDemoButton",
     "importFileButton",
     "fileInput",
+    "bookPanel",
+    "bookTitle",
+    "bookAuthor",
+    "chapterSelect",
+    "previousChapterButton",
+    "nextChapterButton",
+    "chapterProgress",
+    "registryCount",
+    "importProjectButton",
+    "projectFileInput",
+    "exportProjectButton",
     "fileMeta",
     "draftStatus",
     "clearDraftButton",
@@ -121,9 +140,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   );
   elements.fileInput.addEventListener("change", () => {
     const [file] = elements.fileInput.files;
-    if (file) importTextFile(file);
+    if (file) importSourceFile(file);
     elements.fileInput.value = "";
   });
+  elements.importProjectButton.addEventListener("click", () =>
+    elements.projectFileInput.click(),
+  );
+  elements.projectFileInput.addEventListener("change", () => {
+    const [file] = elements.projectFileInput.files;
+    if (file) importProjectFile(file);
+    elements.projectFileInput.value = "";
+  });
+  elements.exportProjectButton.addEventListener("click", exportProjectFile);
+  elements.chapterSelect.addEventListener("change", () =>
+    switchChapter(elements.chapterSelect.value),
+  );
+  elements.previousChapterButton.addEventListener("click", () =>
+    moveChapter(-1),
+  );
+  elements.nextChapterButton.addEventListener("click", () => moveChapter(1));
   elements.clearDraftButton.addEventListener("click", clearSavedDraft);
   elements.analyzeButton.addEventListener("click", analyzeText);
   elements.playButton.addEventListener("click", () => startBrowserPreview(0));
@@ -162,7 +197,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("beforeunload", stopBrowserPreview);
 
   await loadConfig();
-  restoreDraft();
+  await restoreDraft();
   updateCounter();
   updateActionAvailability();
 });
@@ -208,6 +243,9 @@ function updateProviderNotice() {
 }
 
 function loadDemo() {
+  state.book = null;
+  state.characterRegistry = emptyCharacterRegistry();
+  renderBookNavigation();
   resetAnalysis();
   state.sourceFile = {
     name: "原创演示文本",
@@ -234,6 +272,18 @@ function handleTextDrop(event) {
   elements.sourceText.classList.remove("drop-active");
   const [file] = event.dataTransfer.files;
   if (!file) return;
+  importSourceFile(file);
+}
+
+function importSourceFile(file) {
+  const lowerName = file.name.toLowerCase();
+  if (
+    lowerName.endsWith(".epub") ||
+    file.type === "application/epub+zip"
+  ) {
+    importEpubFile(file);
+    return;
+  }
   importTextFile(file);
 }
 
@@ -260,6 +310,9 @@ async function importTextFile(file) {
         `文件有 ${count.toLocaleString()} 字，当前单次最多分析 ${max.toLocaleString()} 字。`,
       );
     }
+    state.book = null;
+    state.characterRegistry = emptyCharacterRegistry();
+    renderBookNavigation();
     resetAnalysis();
     state.sourceFile = { name: file.name, encoding: decoded.encoding };
     elements.sourceText.value = decoded.text;
@@ -270,6 +323,451 @@ async function importTextFile(file) {
   } catch (error) {
     showMessage(error.message);
   }
+}
+
+async function importEpubFile(file) {
+  hideMessage();
+  const maxBytes = state.config?.limits?.epub_bytes ?? 20_000_000;
+  if (!file.name.toLowerCase().endsWith(".epub")) {
+    showMessage("请选择扩展名为 .epub 的书籍文件。");
+    return;
+  }
+  if (file.size > maxBytes) {
+    showMessage(
+      `EPUB 文件过大；当前最多 ${(maxBytes / 1_000_000).toFixed(0)} MB。`,
+    );
+    return;
+  }
+  setBusy(elements.importFileButton, true, "正在整理章节…");
+  try {
+    const project = await requestJson("/api/import/epub", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/epub+zip",
+        "X-VoxCast-Filename": encodeURIComponent(file.name),
+      },
+      body: await file.arrayBuffer(),
+    });
+    openBookProject(
+      project,
+      { name: file.name, encoding: "EPUB" },
+      `已导入《${project.title}》，共 ${project.chapters.length} 个可朗读章节。`,
+    );
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    setBusy(elements.importFileButton, false, "导入 TXT / EPUB");
+  }
+}
+
+async function importProjectFile(file) {
+  hideMessage();
+  if (file.size > MAX_PROJECT_FILE_BYTES) {
+    showMessage("项目备份过大；当前最多 12 MB。");
+    return;
+  }
+  setBusy(elements.importProjectButton, true, "正在打开…");
+  try {
+    const project = JSON.parse(await file.text());
+    openBookProject(
+      project,
+      { name: file.name, encoding: "声场项目" },
+      `已打开《${project.title || "未命名书籍"}》的项目备份。`,
+    );
+  } catch (error) {
+    showMessage(
+      error instanceof SyntaxError
+        ? "项目文件不是有效的 JSON。"
+        : error.message,
+    );
+  } finally {
+    setBusy(elements.importProjectButton, false, "打开书籍项目");
+  }
+}
+
+function openBookProject(project, sourceFile, successMessage) {
+  const normalized = normalizeBookProject(project);
+  stopBrowserPreview();
+  resetAnalysis();
+  state.book = normalized;
+  state.characterRegistry = normalizeCharacterRegistry(
+    normalized.character_registry,
+  );
+  state.sourceFile = sourceFile || {
+    name: normalized.source_name || `${normalized.title}.voxcast.json`,
+    encoding: "声场项目",
+  };
+  loadChapter(normalized.selected_chapter_id, false);
+  renderBookNavigation();
+  scheduleDraftSave();
+  const warning = normalized.warnings?.[0];
+  showMessage(
+    warning ? `${successMessage} ${warning}` : successMessage,
+    true,
+  );
+}
+
+function normalizeBookProject(project) {
+  if (!project || project.schema !== BOOK_SCHEMA) {
+    throw new Error("这不是声场书籍项目文件。");
+  }
+  if (Number(project.version) !== BOOK_VERSION) {
+    throw new Error("暂不支持这个版本的声场项目文件。");
+  }
+  if (!Array.isArray(project.chapters) || !project.chapters.length) {
+    throw new Error("项目里没有可朗读章节。");
+  }
+  if (project.chapters.length > 500) {
+    throw new Error("项目章节过多；当前最多保存 500 章。");
+  }
+  const seen = new Set();
+  let totalCharacters = 0;
+  const chapters = project.chapters.map((chapter, index) => {
+    if (!chapter || typeof chapter.text !== "string") {
+      throw new Error(`第 ${index + 1} 章缺少正文。`);
+    }
+    const id = String(chapter.id || `chapter_${index + 1}`);
+    if (seen.has(id)) throw new Error("项目包含重复的章节。");
+    seen.add(id);
+    const text = chapter.text.replace(/\r\n?/g, "\n").trim();
+    if (!text) throw new Error(`第 ${index + 1} 章没有可朗读文字。`);
+    if ([...text].length > 50_000) {
+      throw new Error(`“${chapter.title || `第 ${index + 1} 章`}”过长，请重新导入原 EPUB。`);
+    }
+    totalCharacters += [...text].length;
+    return {
+      id,
+      title: String(chapter.title || `第 ${index + 1} 章`).trim(),
+      text,
+      source_path: String(chapter.source_path || ""),
+      analysis: chapter.analysis
+        ? normalizeAnalysis(deepCopy(chapter.analysis))
+        : null,
+    };
+  });
+  if (totalCharacters > 5_000_000) {
+    throw new Error("整本书超过 500 万字，暂不支持导入。");
+  }
+  const pronunciations = normalizePronunciations(project.pronunciations);
+  for (const chapter of chapters) {
+    if (chapter.analysis) {
+      chapter.analysis.pronunciations = { ...pronunciations };
+    }
+  }
+  const selected = seen.has(String(project.selected_chapter_id))
+    ? String(project.selected_chapter_id)
+    : chapters[0].id;
+  return {
+    schema: BOOK_SCHEMA,
+    version: BOOK_VERSION,
+    title: String(project.title || "未命名书籍").trim(),
+    author: String(project.author || "").trim(),
+    source_name: String(project.source_name || ""),
+    source_type: String(project.source_type || "project"),
+    selected_chapter_id: selected,
+    chapters,
+    character_registry: normalizeCharacterRegistry(
+      project.character_registry,
+    ),
+    pronunciations,
+    warnings: Array.isArray(project.warnings)
+      ? project.warnings.map(String).filter(Boolean)
+      : [],
+  };
+}
+
+function normalizeCharacterRegistry(value) {
+  const limit = Math.max(
+    1,
+    Math.min(
+      10,
+      Number(value?.primary_limit) ||
+        state.config?.limits?.primary_characters ||
+        10,
+    ),
+  );
+  const normalizedCharacters = Array.isArray(value?.characters)
+    ? value.characters
+        .filter(
+          (character) =>
+            character &&
+            typeof character.id === "string" &&
+            typeof character.name === "string",
+        )
+        .map((character) => ({
+          aliases: [],
+          traits: [],
+          evidence: [],
+          locked: false,
+          gender: "unknown",
+          age_group: "unknown",
+          voice_id: "",
+          confidence: 0.5,
+          ...deepCopy(character),
+        }))
+    : [];
+  const characters = [];
+  let primaryCount = 0;
+  for (const character of normalizedCharacters) {
+    if (!["narrator", "minor_characters"].includes(character.id)) {
+      if (primaryCount >= limit) continue;
+      primaryCount += 1;
+    }
+    if (!characters.some((item) => item.id === character.id)) {
+      characters.push(character);
+    }
+  }
+  return {
+    characters,
+    dialogue_counts:
+      value?.dialogue_counts && typeof value.dialogue_counts === "object"
+        ? { ...value.dialogue_counts }
+        : {},
+    minor_character_names: Array.isArray(value?.minor_character_names)
+      ? [...new Set(value.minor_character_names.map(String).filter(Boolean))]
+      : [],
+    primary_limit: limit,
+    primary_count: primaryCount,
+  };
+}
+
+function emptyCharacterRegistry() {
+  return {
+    characters: [],
+    dialogue_counts: {},
+    minor_character_names: [],
+    primary_limit: 10,
+    primary_count: 0,
+  };
+}
+
+function normalizePronunciations(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([source, reading]) => [String(source).trim(), String(reading).trim()])
+      .filter(
+        ([source, reading]) =>
+          source &&
+          reading &&
+          source !== reading &&
+          [...source].length <= 32 &&
+          [...reading].length <= 64,
+      )
+      .slice(0, 100),
+  );
+}
+
+function currentChapter() {
+  if (!state.book) return null;
+  return (
+    state.book.chapters.find(
+      (chapter) => chapter.id === state.book.selected_chapter_id,
+    ) || null
+  );
+}
+
+function saveCurrentChapter() {
+  const chapter = currentChapter();
+  if (!chapter) return;
+  chapter.text = elements.sourceText.value;
+  chapter.analysis =
+    state.analysis && !state.analysisStale ? deepCopy(state.analysis) : null;
+  if (state.analysis) {
+    state.book.pronunciations = {
+      ...state.analysis.pronunciations,
+    };
+  }
+  state.book.character_registry = deepCopy(state.characterRegistry);
+}
+
+function loadChapter(chapterId, saveCurrent = true) {
+  if (!state.book) return;
+  if (saveCurrent) saveCurrentChapter();
+  const chapter = state.book.chapters.find((item) => item.id === chapterId);
+  if (!chapter) return;
+  stopBrowserPreview();
+  state.book.selected_chapter_id = chapter.id;
+  elements.sourceText.value = chapter.text;
+  elements.fileMeta.textContent =
+    `${state.book.source_name || state.sourceFile?.name || "书籍项目"} · ${chapter.title} · ${[...chapter.text].length.toLocaleString()} 字`;
+  resetAnalysis();
+  if (chapter.analysis) {
+    state.analysis = normalizeAnalysis(deepCopy(chapter.analysis));
+    state.analysis.pronunciations = {
+      ...state.book.pronunciations,
+    };
+    applyRegistryProfiles(state.analysis);
+    state.analysisSourceText = chapter.text.trim();
+    state.analysisStale = false;
+    renderAnalysis();
+    elements.resultSection.hidden = false;
+    scheduleRenderPlan();
+  }
+  renderBookNavigation();
+  updateCounter();
+  updateActionAvailability();
+  if (saveCurrent) scheduleDraftSave();
+}
+
+function switchChapter(chapterId) {
+  if (state.isRendering) {
+    showMessage("当前正在生成声音，请完成后再切换章节。");
+    elements.chapterSelect.value = state.book.selected_chapter_id;
+    return;
+  }
+  loadChapter(chapterId);
+  showMessage(`已切换到“${currentChapter().title}”。`, true);
+}
+
+function moveChapter(offset) {
+  if (!state.book) return;
+  const index = state.book.chapters.findIndex(
+    (chapter) => chapter.id === state.book.selected_chapter_id,
+  );
+  const target = Math.max(
+    0,
+    Math.min(state.book.chapters.length - 1, index + offset),
+  );
+  if (target !== index) switchChapter(state.book.chapters[target].id);
+}
+
+function renderBookNavigation() {
+  elements.bookPanel.hidden = !state.book;
+  if (!state.book) return;
+  const index = Math.max(
+    0,
+    state.book.chapters.findIndex(
+      (chapter) => chapter.id === state.book.selected_chapter_id,
+    ),
+  );
+  elements.bookTitle.textContent = state.book.title;
+  elements.bookAuthor.textContent = state.book.author || "作者未知";
+  elements.chapterSelect.innerHTML = "";
+  for (const chapter of state.book.chapters) {
+    const option = document.createElement("option");
+    option.value = chapter.id;
+    option.textContent = chapter.analysis
+      ? `✓ ${chapter.title}`
+      : chapter.title;
+    elements.chapterSelect.appendChild(option);
+  }
+  elements.chapterSelect.value = state.book.selected_chapter_id;
+  elements.chapterProgress.textContent =
+    `${index + 1} / ${state.book.chapters.length}`;
+  const primaryCount = state.characterRegistry.characters.filter(
+    (character) =>
+      !["narrator", "minor_characters"].includes(character.id),
+  ).length;
+  elements.registryCount.textContent =
+    `主要角色 ${primaryCount} / ${state.characterRegistry.primary_limit}`;
+  elements.previousChapterButton.disabled = index <= 0 || state.isRendering;
+  elements.nextChapterButton.disabled =
+    index >= state.book.chapters.length - 1 || state.isRendering;
+  elements.chapterSelect.disabled = state.isRendering;
+}
+
+function applyRegistryProfiles(analysis) {
+  const registryById = new Map(
+    state.characterRegistry.characters.map((character) => [
+      character.id,
+      character,
+    ]),
+  );
+  analysis.characters = analysis.characters.map((character) =>
+    registryById.has(character.id)
+      ? deepCopy(registryById.get(character.id))
+      : character,
+  );
+  recomputeSummary(analysis);
+}
+
+function syncRegistryFromAnalysis(removedIds = []) {
+  if (!state.analysis) return;
+  const removed = new Set(removedIds);
+  const byId = new Map(
+    state.characterRegistry.characters
+      .filter((character) => !removed.has(character.id))
+      .map((character) => [character.id, character]),
+  );
+  for (const character of state.analysis.characters) {
+    byId.set(character.id, deepCopy(character));
+  }
+  state.characterRegistry.characters = [...byId.values()];
+  state.characterRegistry.primary_count =
+    state.characterRegistry.characters.filter(
+      (character) =>
+        !["narrator", "minor_characters"].includes(character.id),
+    ).length;
+  if (state.book) {
+    state.book.character_registry = deepCopy(state.characterRegistry);
+    renderBookNavigation();
+  }
+}
+
+function syncBookPronunciations() {
+  if (!state.book || !state.analysis) return;
+  state.book.pronunciations = { ...state.analysis.pronunciations };
+  for (const chapter of state.book.chapters) {
+    if (chapter.analysis) {
+      chapter.analysis.pronunciations = { ...state.book.pronunciations };
+    }
+  }
+}
+
+function exportProjectFile() {
+  hideMessage();
+  const text = elements.sourceText.value.trim();
+  if (!state.book && !text) {
+    showMessage("请先粘贴或导入一本书，再下载项目备份。");
+    return;
+  }
+  saveCurrentChapter();
+  const project = state.book
+    ? deepCopy(state.book)
+    : {
+        schema: BOOK_SCHEMA,
+        version: BOOK_VERSION,
+        title: (state.sourceFile?.name || "我的有声书").replace(/\.[^.]+$/, ""),
+        author: "",
+        source_name: state.sourceFile?.name || "",
+        source_type: "txt",
+        selected_chapter_id: "chapter_1",
+        chapters: [
+          {
+            id: "chapter_1",
+            title: "正文",
+            text: elements.sourceText.value,
+            source_path: "",
+            analysis: state.analysis ? deepCopy(state.analysis) : null,
+          },
+        ],
+        character_registry: deepCopy(state.characterRegistry),
+        pronunciations: {
+          ...(state.analysis?.pronunciations || {}),
+        },
+        warnings: [],
+      };
+  project.schema = BOOK_SCHEMA;
+  project.version = BOOK_VERSION;
+  project.character_registry = deepCopy(state.characterRegistry);
+  const blob = new Blob([JSON.stringify(project, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const safeTitle = String(project.title || "voxcast-book")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .slice(0, 80);
+  anchor.href = url;
+  anchor.download = `${safeTitle}.voxcast.json`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 500);
+  showMessage("项目备份已下载；它包含章节、角色、纠错和发音记忆。", true);
+}
+
+function deepCopy(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function decodeTextBytes(arrayBuffer) {
@@ -319,6 +817,8 @@ function decodeTextBytes(arrayBuffer) {
 function handleSourceChanged() {
   updateCounter();
   const current = elements.sourceText.value.trim();
+  const chapter = currentChapter();
+  if (chapter) chapter.text = elements.sourceText.value;
   if (state.analysis) {
     state.analysisStale = current !== state.analysisSourceText;
     renderAnalysisSummary();
@@ -352,7 +852,7 @@ function resetAnalysis() {
 async function analyzeText() {
   const text = elements.sourceText.value.trim();
   if (!text) {
-    showMessage("请先粘贴小说文本、导入 TXT，或者载入演示文本。");
+    showMessage("请先粘贴小说文本、导入 TXT / EPUB，或者载入演示文本。");
     return;
   }
   const max = state.config?.limits?.analyze_characters ?? 50000;
@@ -365,17 +865,27 @@ async function analyzeText() {
   hideMessage();
   stopBrowserPreview();
   try {
-    state.analysis = normalizeAnalysis(
-      await requestJson("/api/analyze", {
+    const result = await requestJson("/api/analyze", {
         method: "POST",
         body: JSON.stringify({
           text,
           mode: elements.analyzerMode.value,
+          character_registry: state.characterRegistry,
         }),
-      }),
+      });
+    state.characterRegistry = normalizeCharacterRegistry(
+      result.character_registry,
     );
+    delete result.character_registry;
+    state.analysis = normalizeAnalysis(result);
+    state.analysis.pronunciations = {
+      ...(state.book?.pronunciations || state.analysis.pronunciations),
+    };
     state.analysisSourceText = text;
     state.analysisStale = false;
+    syncRegistryFromAnalysis();
+    saveCurrentChapter();
+    renderBookNavigation();
     renderAnalysis();
     elements.resultSection.hidden = false;
     scheduleDraftSave();
@@ -538,6 +1048,7 @@ function renderCharacters() {
     const lockCharacter = () => {
       character.locked = true;
       card.querySelector(".locked-badge").hidden = false;
+      syncRegistryFromAnalysis();
       scheduleDraftSave();
       scheduleRenderPlan();
     };
@@ -639,6 +1150,41 @@ function mergeCharacter(sourceId, targetId) {
   state.analysis.characters = state.analysis.characters.filter(
     (character) => character.id !== source.id,
   );
+  if (state.book) {
+    for (const chapter of state.book.chapters) {
+      if (!chapter.analysis) continue;
+      const chapterSource = chapter.analysis.characters?.find(
+        (character) => character.id === source.id,
+      );
+      const chapterTarget = chapter.analysis.characters?.find(
+        (character) => character.id === target.id,
+      );
+      if (chapterSource && chapterTarget) {
+        chapterTarget.aliases = uniqueValues([
+          ...(chapterTarget.aliases || []),
+          chapterSource.name,
+          ...(chapterSource.aliases || []),
+        ]).filter((alias) => alias !== chapterTarget.name);
+      }
+      chapter.analysis.characters = (chapter.analysis.characters || []).filter(
+        (character) => character.id !== source.id,
+      );
+      for (const segment of chapter.analysis.segments || []) {
+        if (segment.speaker_id === source.id) {
+          segment.speaker_id = target.id;
+          segment.locked = true;
+        }
+      }
+      recomputeSummary(chapter.analysis);
+    }
+  }
+  if (state.characterRegistry.dialogue_counts[source.id]) {
+    state.characterRegistry.dialogue_counts[target.id] =
+      Number(state.characterRegistry.dialogue_counts[target.id] || 0) +
+      Number(state.characterRegistry.dialogue_counts[source.id] || 0);
+    delete state.characterRegistry.dialogue_counts[source.id];
+  }
+  syncRegistryFromAnalysis([source.id]);
   recomputeSummary();
   renderAnalysis();
   scheduleDraftSave();
@@ -667,6 +1213,7 @@ function renderPronunciations() {
   for (const button of elements.pronunciationList.querySelectorAll("button")) {
     button.addEventListener("click", () => {
       delete state.analysis.pronunciations[button.dataset.source];
+      syncBookPronunciations();
       renderPronunciations();
       scheduleDraftSave();
       scheduleRenderPlan();
@@ -715,6 +1262,7 @@ function savePronunciation(event) {
     return;
   }
   state.analysis.pronunciations[source] = reading;
+  syncBookPronunciations();
   closePronunciationEditor();
   renderPronunciations();
   scheduleDraftSave();
@@ -1299,21 +1847,23 @@ function updateActionAvailability() {
   if (!elements.retryRenderButton.hidden) {
     elements.retryRenderButton.disabled = unavailable;
   }
+  renderBookNavigation();
 }
 
 function scheduleDraftSave() {
   window.clearTimeout(state.draftTimer);
   elements.draftStatus.textContent = "正在保存本机草稿…";
-  state.draftTimer = window.setTimeout(saveDraft, 450);
+  state.draftTimer = window.setTimeout(() => void saveDraft(), 450);
 }
 
-function saveDraft() {
+async function saveDraft() {
   const text = elements.sourceText.value;
-  if (!text && !state.analysis) {
-    window.localStorage.removeItem(DRAFT_KEY);
+  if (!text && !state.analysis && !state.book) {
+    await deleteStoredDraft();
     elements.draftStatus.textContent = "本机草稿尚未保存";
     return;
   }
+  saveCurrentChapter();
   const savedAt = new Date().toISOString();
   const project = {
     version: DRAFT_VERSION,
@@ -1324,32 +1874,48 @@ function saveDraft() {
     preview_speed: elements.previewSpeed.value,
     analysis_source_text: state.analysisSourceText,
     analysis: state.analysis,
+    book: state.book,
+    character_registry: state.characterRegistry,
     saved_at: savedAt,
   };
   try {
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(project));
+    await writeDraftToDatabase(project);
+    window.localStorage.removeItem(DRAFT_KEY);
     elements.draftStatus.textContent =
       `本机草稿已保存 ${new Date(savedAt).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       })}`;
   } catch {
-    elements.draftStatus.textContent = "本机存储空间不足，草稿未保存";
+    try {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(project));
+      elements.draftStatus.textContent = "已使用兼容模式保存本机草稿";
+    } catch {
+      elements.draftStatus.textContent = "本机存储空间不足，草稿未保存";
+    }
   }
 }
 
-function restoreDraft() {
-  const raw = window.localStorage.getItem(DRAFT_KEY);
-  if (!raw) return;
+async function restoreDraft() {
+  let project = null;
   try {
-    const project = JSON.parse(raw);
-    if (!project || typeof project.source_text !== "string") return;
-    elements.sourceText.value = project.source_text;
-    state.sourceFile = project.source_file || null;
-    if (state.sourceFile) {
-      elements.fileMeta.textContent =
-        `${state.sourceFile.name} · ${state.sourceFile.encoding}`;
+    project = await readDraftFromDatabase();
+  } catch {
+    // Older browsers continue with the localStorage fallback below.
+  }
+  if (!project) {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return;
+    try {
+      project = JSON.parse(raw);
+    } catch {
+      window.localStorage.removeItem(DRAFT_KEY);
+      return;
     }
+  }
+  try {
+    if (!project || typeof project.source_text !== "string") return;
+    state.sourceFile = project.source_file || null;
     if (
       project.analyzer_mode &&
       [...elements.analyzerMode.options].some(
@@ -1375,14 +1941,34 @@ function restoreDraft() {
     ) {
       elements.previewSpeed.value = project.preview_speed;
     }
-    if (project.analysis) {
-      state.analysis = normalizeAnalysis(project.analysis);
-      state.analysisSourceText = project.analysis_source_text || "";
-      state.analysisStale =
-        elements.sourceText.value.trim() !== state.analysisSourceText;
-      renderAnalysis();
-      elements.resultSection.hidden = false;
-      scheduleRenderPlan();
+
+    if (project.book) {
+      state.book = normalizeBookProject(project.book);
+      state.characterRegistry = normalizeCharacterRegistry(
+        project.character_registry || state.book.character_registry,
+      );
+      state.book.character_registry = deepCopy(state.characterRegistry);
+      loadChapter(state.book.selected_chapter_id, false);
+    } else {
+      state.book = null;
+      state.characterRegistry = normalizeCharacterRegistry(
+        project.character_registry,
+      );
+      elements.sourceText.value = project.source_text;
+      if (state.sourceFile) {
+        elements.fileMeta.textContent =
+          `${state.sourceFile.name} · ${state.sourceFile.encoding}`;
+      }
+      if (project.analysis) {
+        state.analysis = normalizeAnalysis(project.analysis);
+        state.analysisSourceText = project.analysis_source_text || "";
+        state.analysisStale =
+          elements.sourceText.value.trim() !== state.analysisSourceText;
+        renderAnalysis();
+        elements.resultSection.hidden = false;
+        scheduleRenderPlan();
+      }
+      renderBookNavigation();
     }
     const saved = project.saved_at ? new Date(project.saved_at) : null;
     elements.draftStatus.textContent =
@@ -1391,20 +1977,21 @@ function restoreDraft() {
         : "已恢复本机草稿";
     showMessage("已恢复上次保存在这台浏览器中的项目草稿。", true);
   } catch {
-    window.localStorage.removeItem(DRAFT_KEY);
+    await deleteStoredDraft();
   }
 }
 
-function clearSavedDraft() {
-  window.localStorage.removeItem(DRAFT_KEY);
+async function clearSavedDraft() {
+  await deleteStoredDraft();
   elements.draftStatus.textContent = "保存副本已删除；当前页面内容仍保留";
   showMessage("已删除这台浏览器中的保存副本，当前页面内容没有变化。", true);
 }
 
 async function requestJson(path, options = {}) {
+  const { headers = {}, ...requestOptions } = options;
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
+    headers: { "Content-Type": "application/json", ...headers },
+    ...requestOptions,
   });
   let payload;
   try {
@@ -1416,6 +2003,75 @@ async function requestJson(path, options = {}) {
     throw new Error(payload.message || `请求失败（HTTP ${response.status}）`);
   }
   return payload;
+}
+
+function openDraftDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("浏览器不支持 IndexedDB"));
+      return;
+    }
+    const request = window.indexedDB.open(DRAFT_DATABASE, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(DRAFT_STORE)) {
+        request.result.createObjectStore(DRAFT_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("本机存储不可用"));
+  });
+}
+
+async function writeDraftToDatabase(project) {
+  const database = await openDraftDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(DRAFT_STORE, "readwrite");
+      transaction.objectStore(DRAFT_STORE).put(project, DRAFT_RECORD);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error || new Error("保存草稿失败"));
+      transaction.onabort = () =>
+        reject(transaction.error || new Error("保存草稿已中止"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function readDraftFromDatabase() {
+  const database = await openDraftDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(DRAFT_STORE, "readonly");
+      const request = transaction.objectStore(DRAFT_STORE).get(DRAFT_RECORD);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () =>
+        reject(request.error || new Error("读取草稿失败"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function deleteStoredDraft() {
+  window.localStorage.removeItem(DRAFT_KEY);
+  try {
+    const database = await openDraftDatabase();
+    try {
+      await new Promise((resolve, reject) => {
+        const transaction = database.transaction(DRAFT_STORE, "readwrite");
+        transaction.objectStore(DRAFT_STORE).delete(DRAFT_RECORD);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () =>
+          reject(transaction.error || new Error("删除草稿失败"));
+      });
+    } finally {
+      database.close();
+    }
+  } catch {
+    // localStorage has already been cleared; IndexedDB may not exist.
+  }
 }
 
 function setBusy(button, busy, label) {

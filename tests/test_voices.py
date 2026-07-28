@@ -1,7 +1,7 @@
 import unittest
 
 from audiobook_app.models import CharacterProfile
-from audiobook_app.voices import VOICE_BY_ID, cast_characters
+from audiobook_app.voices import VOICE_BY_ID, VOICE_CATALOG, cast_characters
 
 
 class VoiceCastingTests(unittest.TestCase):
@@ -34,7 +34,15 @@ class VoiceCastingTests(unittest.TestCase):
             (elder_voice.gender, elder_voice.age_group), ("female", "elder")
         )
 
+    def test_catalog_is_curated_and_provider_ids_are_unique(self) -> None:
+        self.assertGreaterEqual(len(VOICE_CATALOG), 20)
+        self.assertLessEqual(len(VOICE_CATALOG), 30)
+        provider_ids = [voice.provider_voice for voice in VOICE_CATALOG]
+        self.assertEqual(len(provider_ids), len(set(provider_ids)))
+        self.assertTrue(
+            all(voice.provider_voice.endswith("_v3") for voice in VOICE_CATALOG)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

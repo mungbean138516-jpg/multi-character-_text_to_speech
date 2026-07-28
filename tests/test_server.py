@@ -3,12 +3,14 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 import audiobook_app.server as app_server
+from tests.test_epub import make_epub
 
 
 class QuietHandler(app_server.AudiobookRequestHandler):
@@ -49,6 +51,20 @@ class ServerIntegrationTests(unittest.TestCase):
             cls.base_url + path,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @classmethod
+    def post_bytes(cls, path: str, data: bytes, filename: str) -> dict:
+        request = urllib.request.Request(
+            cls.base_url + path,
+            data=data,
+            headers={
+                "Content-Type": "application/epub+zip",
+                "X-VoxCast-Filename": urllib.parse.quote(filename),
+            },
             method="POST",
         )
         with urllib.request.urlopen(request) as response:
@@ -118,6 +134,59 @@ class ServerIntegrationTests(unittest.TestCase):
                 self.base_url + "/outputs/_cache/not-public.wav"
             )
         self.assertEqual(context.exception.code, 404)
+
+    def test_epub_import_returns_book_project(self) -> None:
+        project = self.post_bytes(
+            "/api/import/epub",
+            make_epub("雨停了。", "火车进站了。"),
+            "北城来信.epub",
+        )
+
+        self.assertEqual(project["schema"], "voxcast-book-project")
+        self.assertEqual(project["title"], "北城来信")
+        self.assertEqual(len(project["chapters"]), 2)
+        self.assertEqual(project["source_name"], "北城来信.epub")
+
+    def test_analysis_respects_locked_book_character(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {
+                "mode": "local",
+                "text": "陈默说：“出发吧。”",
+                "character_registry": {
+                    "primary_limit": 10,
+                    "characters": [
+                        {
+                            "id": "narrator",
+                            "name": "旁白",
+                            "voice_id": "narrator_f",
+                        },
+                        {
+                            "id": "book_chen_mo",
+                            "name": "陈默",
+                            "gender": "male",
+                            "age_group": "adult",
+                            "voice_id": "adult_m_calm",
+                            "locked": True,
+                        },
+                    ],
+                },
+            },
+        )
+
+        character = next(
+            item for item in analysis["characters"] if item["name"] == "陈默"
+        )
+        self.assertEqual(character["id"], "book_chen_mo")
+        self.assertEqual(character["voice_id"], "adult_m_calm")
+        self.assertEqual(
+            analysis["segments"][-1]["speaker_id"],
+            "book_chen_mo",
+        )
+        self.assertEqual(
+            analysis["character_registry"]["primary_count"],
+            1,
+        )
 
 
 if __name__ == "__main__":
