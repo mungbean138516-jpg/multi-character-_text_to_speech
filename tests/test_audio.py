@@ -1,9 +1,11 @@
+import json
 import tempfile
 import unittest
 import wave
 from pathlib import Path
 
 from audiobook_app.audio import (
+    apply_pronunciations,
     build_render_plan,
     concatenate_wavs,
     mp3_is_available,
@@ -22,6 +24,17 @@ def make_silent_wav(path: Path, duration_seconds: float, sample_rate: int = 2400
 
 
 class AudioPipelineTests(unittest.TestCase):
+    def test_pronunciations_prefer_longest_match_without_cascading(self) -> None:
+        result = apply_pronunciations(
+            "单雄信和单老师",
+            {
+                "单": "善",
+                "单雄信": "善雄信",
+                "善": "扇",
+            },
+        )
+        self.assertEqual(result, "善雄信和善老师")
+
     def test_concatenate_wavs_inserts_pause(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -130,6 +143,72 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertEqual(second["cache_hits"], 2)
         self.assertEqual(provider.calls, 2)
         self.assertEqual(plan["estimated_requests"], 0)
+
+    def test_pronunciation_change_only_invalidates_affected_audio(self) -> None:
+        class CapturingProvider(DemoToneProvider):
+            def __init__(self):
+                self.texts: list[str] = []
+
+            def synthesize(self, segment, *args, **kwargs):
+                self.texts.append(segment.text)
+                return super().synthesize(segment, *args, **kwargs)
+
+        base = AnalysisResult(
+            characters=[
+                CharacterProfile(
+                    id="narrator",
+                    name="旁白",
+                    voice_id="narrator_f",
+                )
+            ],
+            segments=[
+                ScriptSegment(
+                    id="seg_001",
+                    kind="narration",
+                    text="单老师到了。",
+                    speaker_id="narrator",
+                )
+            ],
+        )
+        corrected = AnalysisResult.from_dict(base.to_dict())
+        corrected.pronunciations = {"单": "善"}
+        provider = CapturingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "cache"
+            render_audiobook(base, provider, root / "jobs", cache_root=cache)
+            second = render_audiobook(
+                corrected,
+                provider,
+                root / "jobs",
+                cache_root=cache,
+            )
+            third = render_audiobook(
+                corrected,
+                provider,
+                root / "jobs",
+                cache_root=cache,
+            )
+            manifest = json.loads(
+                (
+                    root
+                    / "jobs"
+                    / str(second["job_id"])
+                    / "manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(provider.texts, ["单老师到了。", "善老师到了。"])
+        self.assertEqual(second["cache_hits"], 0)
+        self.assertEqual(third["cache_hits"], 1)
+        self.assertEqual(
+            manifest["segments"][0]["segment"]["text"],
+            "单老师到了。",
+        )
+        self.assertEqual(
+            manifest["segments"][0]["spoken_text"],
+            "善老师到了。",
+        )
 
     def test_failed_segment_can_retry_without_regenerating_successes(self) -> None:
         class FailOnceProvider(DemoToneProvider):

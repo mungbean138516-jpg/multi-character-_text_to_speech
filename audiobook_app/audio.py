@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import wave
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -99,29 +101,56 @@ def _validate_wav(path: Path) -> tuple[int, int, int]:
     return params
 
 
+def apply_pronunciations(text: str, pronunciations: dict[str, str]) -> str:
+    """Apply project-level readings without changing the displayed source text."""
+    if not pronunciations:
+        return text
+    sources = sorted(
+        (source for source in pronunciations if source),
+        key=lambda source: (-len(source), source),
+    )
+    if not sources:
+        return text
+    pattern = re.compile("|".join(re.escape(source) for source in sources))
+    return pattern.sub(lambda match: pronunciations[match.group(0)], text)
+
+
 def _prepared_segments(
     analysis: AnalysisResult,
     *,
     max_characters: int,
     max_segments: int,
-) -> list[tuple[ScriptSegment, CharacterProfile, VoicePreset]]:
+) -> list[
+    tuple[ScriptSegment, ScriptSegment, CharacterProfile, VoicePreset]
+]:
     if not analysis.segments:
         raise ValueError("没有可生成的脚本片段")
     if len(analysis.segments) > max_segments:
         raise ValueError(f"单次最多生成 {max_segments} 个片段")
-    total_characters = sum(len(segment.text) for segment in analysis.segments)
+    total_characters = sum(
+        len(apply_pronunciations(segment.text, analysis.pronunciations))
+        for segment in analysis.segments
+    )
     if total_characters > max_characters:
         raise ValueError(f"单次最多生成 {max_characters} 个字符")
 
     characters = {character.id: character for character in analysis.characters}
-    prepared: list[tuple[ScriptSegment, CharacterProfile, VoicePreset]] = []
+    prepared: list[
+        tuple[ScriptSegment, ScriptSegment, CharacterProfile, VoicePreset]
+    ] = []
     for segment in analysis.segments:
         if not segment.text:
             raise ValueError(f"{segment.id} 没有可生成的文本")
         character = characters.get(segment.speaker_id)
         if character is None:
             raise ValueError(f"{segment.id} 引用了不存在的角色")
-        prepared.append((segment, character, get_voice(character.voice_id)))
+        spoken_segment = replace(
+            segment,
+            text=apply_pronunciations(segment.text, analysis.pronunciations),
+        )
+        prepared.append(
+            (segment, spoken_segment, character, get_voice(character.voice_id))
+        )
     return prepared
 
 
@@ -185,15 +214,15 @@ def build_render_plan(
     )
     cached_segments = 0
     estimated_billable_characters = 0
-    for segment, _character, voice in prepared:
+    for _display_segment, spoken_segment, _character, voice in prepared:
         cache_hit = False
         if cache_root is not None:
-            key = segment_cache_key(provider, segment, voice)
+            key = segment_cache_key(provider, spoken_segment, voice)
             cache_hit = _cache_is_valid(_cache_path(cache_root, key))
         if cache_hit:
             cached_segments += 1
         else:
-            estimated_billable_characters += len(segment.text)
+            estimated_billable_characters += len(spoken_segment.text)
 
     estimated_cost = None
     if price_per_10k_cny is not None:
@@ -204,7 +233,7 @@ def build_render_plan(
     return {
         "provider": provider.name,
         "segments": len(prepared),
-        "billable_characters": sum(len(item[0].text) for item in prepared),
+        "billable_characters": sum(len(item[1].text) for item in prepared),
         "cached_segments": cached_segments,
         "estimated_requests": len(prepared) - cached_segments,
         "estimated_billable_characters": estimated_billable_characters,
@@ -234,6 +263,7 @@ def render_audiobook(
         max_segments=max_segments,
     )
     total_characters = sum(len(segment.text) for segment in analysis.segments)
+    spoken_characters = sum(len(item[1].text) for item in prepared)
     max_attempts = max(1, min(int(max_attempts), 3))
 
     job_id = uuid4().hex[:12]
@@ -245,9 +275,14 @@ def render_audiobook(
     failures: list[dict[str, object]] = []
     cache_hits = 0
     synthesized_segments = 0
-    for index, (segment, character, voice) in enumerate(prepared, start=1):
-        output_path = segment_dir / f"{index:03d}_{segment.id}.wav"
-        cache_key = segment_cache_key(provider, segment, voice)
+    for index, (
+        display_segment,
+        spoken_segment,
+        character,
+        voice,
+    ) in enumerate(prepared, start=1):
+        output_path = segment_dir / f"{index:03d}_{display_segment.id}.wav"
+        cache_key = segment_cache_key(provider, spoken_segment, voice)
         cached_path = _cache_path(cache_root, cache_key) if cache_root else None
         metadata: dict[str, object]
 
@@ -267,7 +302,7 @@ def render_audiobook(
                 try:
                     metadata = dict(
                         provider.synthesize(
-                            segment,
+                            spoken_segment,
                             character,
                             voice,
                             output_path,
@@ -290,7 +325,7 @@ def render_audiobook(
             else:
                 output_path.unlink(missing_ok=True)
                 failure = {
-                    "segment_id": segment.id,
+                    "segment_id": display_segment.id,
                     "index": index,
                     "message": last_error or "语音供应商未能生成该片段",
                 }
@@ -298,7 +333,12 @@ def render_audiobook(
                 manifest_segments.append(
                     {
                         "status": "failed",
-                        "segment": segment.to_dict(),
+                        "segment": display_segment.to_dict(),
+                        "spoken_text": (
+                            spoken_segment.text
+                            if spoken_segment.text != display_segment.text
+                            else None
+                        ),
                         "character": character.to_dict(),
                         "voice": voice.to_dict(),
                         "error": failure,
@@ -310,7 +350,12 @@ def render_audiobook(
         manifest_segments.append(
             {
                 "status": "completed",
-                "segment": segment.to_dict(),
+                "segment": display_segment.to_dict(),
+                "spoken_text": (
+                    spoken_segment.text
+                    if spoken_segment.text != display_segment.text
+                    else None
+                ),
                 "character": character.to_dict(),
                 "voice": voice.to_dict(),
                 "provider": metadata,
@@ -335,6 +380,7 @@ def render_audiobook(
         "provider": provider.name,
         "requested_format": output_format,
         "total_characters": total_characters,
+        "spoken_characters": spoken_characters,
         "cache_hits": cache_hits,
         "synthesized_segments": synthesized_segments,
         "failed_segments": failures,
@@ -351,6 +397,7 @@ def render_audiobook(
         "provider": provider.name,
         "format": output_format,
         "total_characters": total_characters,
+        "spoken_characters": spoken_characters,
         "segment_count": len(audio_paths),
         "cache_hits": cache_hits,
         "synthesized_segments": synthesized_segments,
