@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .analyzer import HeuristicNovelAnalyzer
-from .audio import render_audiobook
+from .audio import build_render_plan, mp3_is_available, render_audiobook
 from .models import AnalysisResult
 from .providers import (
     DashScopeTTSProvider,
@@ -27,13 +27,44 @@ WEB_ROOT = PROJECT_ROOT / "web"
 OUTPUT_ROOT = Path(
     os.getenv("APP_OUTPUT_DIR", str(PROJECT_ROOT / "data" / "outputs"))
 ).resolve()
+CACHE_ROOT = Path(
+    os.getenv("APP_TTS_CACHE_DIR", str(OUTPUT_ROOT / "_cache"))
+).resolve()
 MAX_REQUEST_BYTES = int(os.getenv("APP_MAX_REQUEST_BYTES", "2000000"))
 MAX_ANALYZE_CHARACTERS = int(os.getenv("APP_MAX_ANALYZE_CHARACTERS", "50000"))
 MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
+MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
+TTS_MAX_ATTEMPTS = int(os.getenv("APP_TTS_MAX_ATTEMPTS", "2"))
+
+
+def _optional_nonnegative_float(name: str) -> float | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+DASHSCOPE_PRICE_PER_10K_CNY = _optional_nonnegative_float(
+    "DASHSCOPE_TTS_PRICE_PER_10K_CNY"
+)
+
+
+def _provider_for_name(name: str):
+    if name == "demo":
+        return DemoToneProvider()
+    if name == "dashscope":
+        if not dashscope_tts_is_configured():
+            raise ValueError("尚未配置百炼 TTS 环境变量")
+        return DashScopeTTSProvider()
+    raise ValueError("未知 TTS 提供方")
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.1"
+    server_version = "MultiVoiceAudiobook/0.2"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -71,7 +102,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.1.0"})
+            self._send_json({"status": "ok", "version": "0.2.0"})
             return
         if path == "/api/config":
             self._send_json(
@@ -98,9 +129,17 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         },
                     },
                     "voices": catalog_as_dicts(),
+                    "formats": {
+                        "wav": {"ready": True, "label": "WAV 无损"},
+                        "mp3": {
+                            "ready": mp3_is_available(),
+                            "label": "MP3 128 kbps",
+                        },
+                    },
                     "limits": {
                         "analyze_characters": MAX_ANALYZE_CHARACTERS,
                         "render_characters": MAX_RENDER_CHARACTERS,
+                        "render_segments": MAX_RENDER_SEGMENTS,
                     },
                 }
             )
@@ -166,44 +205,49 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_render_plan(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
-        provider = str(payload.get("provider", "demo"))
-        characters = sum(len(segment.text) for segment in analysis.segments)
-        if characters > MAX_RENDER_CHARACTERS:
-            raise ValueError(f"单次最多生成 {MAX_RENDER_CHARACTERS} 个字符")
-        self._send_json(
-            {
-                "provider": provider,
-                "segments": len(analysis.segments),
-                "billable_characters": characters,
-                "note": (
-                    "实际费用以供应商控制台为准；每个片段会产生一次 TTS 请求。"
-                    if provider == "dashscope"
-                    else "离线检测不消耗 API 额度。"
-                ),
-            }
+        provider_name = str(payload.get("provider", "demo"))
+        provider = _provider_for_name(provider_name)
+        plan = build_render_plan(
+            analysis,
+            provider,
+            CACHE_ROOT,
+            max_characters=MAX_RENDER_CHARACTERS,
+            max_segments=MAX_RENDER_SEGMENTS,
+            price_per_10k_cny=(
+                DASHSCOPE_PRICE_PER_10K_CNY
+                if provider_name == "dashscope"
+                else 0.0
+            ),
         )
+        if provider_name == "dashscope":
+            plan["note"] = (
+                "只估算未命中缓存的字符与请求；实际费用以供应商账单为准。"
+                if DASHSCOPE_PRICE_PER_10K_CNY is not None
+                else "未配置每万字符单价；已估算未缓存字符与请求数，实际费用以供应商账单为准。"
+            )
+        else:
+            plan["note"] = "离线检测不消耗 API 额度；重复片段会直接复用缓存。"
+        self._send_json(plan)
 
     def _handle_render(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
         if not analysis.segments:
             raise ValueError("没有可生成的脚本片段")
         provider_name = str(payload.get("provider", "demo"))
-        if provider_name == "demo":
-            provider = DemoToneProvider()
-        elif provider_name == "dashscope":
-            if not dashscope_tts_is_configured():
-                raise ValueError("尚未配置百炼 TTS 环境变量")
-            if payload.get("confirm_cost") is not True:
-                raise ValueError("调用付费 TTS 前需要确认可能产生费用")
-            provider = DashScopeTTSProvider()
-        else:
-            raise ValueError("未知 TTS 提供方")
+        if provider_name == "dashscope" and payload.get("confirm_cost") is not True:
+            raise ValueError("调用付费 TTS 前需要确认可能产生费用")
+        provider = _provider_for_name(provider_name)
+        output_format = str(payload.get("format", "wav")).lower()
         OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
         result = render_audiobook(
             analysis,
             provider,
             OUTPUT_ROOT,
             max_characters=MAX_RENDER_CHARACTERS,
+            max_segments=MAX_RENDER_SEGMENTS,
+            cache_root=CACHE_ROOT,
+            max_attempts=TTS_MAX_ATTEMPTS,
+            output_format=output_format,
         )
         self._send_json(result, HTTPStatus.CREATED)
 
@@ -240,6 +284,12 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
 
     def _serve_output(self, request_path: str) -> None:
         relative = posixpath.normpath(unquote(request_path[len("/outputs/") :]))
+        if relative == "_cache" or relative.startswith("_cache/"):
+            self._send_json(
+                {"error": "not_found", "message": "输出文件不存在"},
+                HTTPStatus.NOT_FOUND,
+            )
+            return
         candidate = (OUTPUT_ROOT / relative).resolve()
         if OUTPUT_ROOT not in candidate.parents or not candidate.is_file():
             self._send_json(
@@ -252,8 +302,9 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self._security_headers()
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Length", str(len(body)))
-        if candidate.suffix == ".wav":
+        if candidate.suffix in {".wav", ".mp3"}:
             self.send_header(
                 "Content-Disposition", f'inline; filename="{candidate.name}"'
             )
@@ -274,4 +325,3 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
         pass
     finally:
         server.server_close()
-

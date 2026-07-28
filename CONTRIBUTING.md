@@ -11,6 +11,7 @@
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q audiobook_app
+node --check web/app.js
 python3 -m audiobook_app analyze examples/demo_chapter.txt
 ```
 
@@ -23,11 +24,18 @@ python3 -m audiobook_app
 检查以下路径：
 
 - 空文本错误；
+- UTF-8 / UTF-16 / GB18030 TXT 导入；
+- 嵌套与未闭合引号；
 - 演示文本分析；
+- 修改后刷新页面恢复本机草稿；
+- 合并两个重复角色；
 - 修改角色声线；
-- 修改一条台词说话人；
+- 修改一条台词文字、情绪与说话人；
 - 浏览器试听开始与停止；
-- 离线 WAV 生成与下载；
+- 预算中的未缓存请求数；
+- 离线 WAV / MP3 生成与下载；
+- 第二次相同生成全部命中缓存；
+- 人为失败后只重试失败片段；
 - 未配置百炼时真实按钮禁用。
 
 ## 代码边界
@@ -37,7 +45,9 @@ python3 -m audiobook_app
 - 供应商 TTS 进入 `providers/`。
 - 供应商 voice ID 只进入 `voices.py`。
 - 音频格式和拼接进入 `audio.py`。
+- 文件编码进入 `textio.py`，浏览器实现须保持相同优先级。
 - 前端不能知道永久 API Key。
+- 缓存键不能包含 API Key、用户 ID 或临时下载 URL。
 
 ## 新增规则
 
@@ -60,4 +70,4 @@ python3 -m audiobook_app
 - 可通过环境变量禁用；
 - CI 有纯离线替身；
 - README 标明官方 API 与模型 / voice 兼容规则。
-
+- `cache_identity()` 只返回影响波形的非敏感配置。

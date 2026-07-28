@@ -75,6 +75,7 @@ class QwenNovelAnalyzer:
                 "characters": [
                     {
                         "name": "角色姓名或可区分的称谓",
+                        "aliases": ["同一角色在原文中的其他姓名或称谓"],
                         "gender": "female|male|neutral|unknown",
                         "age_group": "child|teen|adult|elder|unknown",
                         "traits": ["最多4个简短中文声音特质"],
@@ -132,14 +133,38 @@ class QwenNovelAnalyzer:
         by_name: dict[str, CharacterProfile] = {
             character.name: character for character in baseline.characters[1:]
         }
+
+        def rebuild_alias_lookup() -> dict[str, CharacterProfile]:
+            lookup: dict[str, CharacterProfile] = {}
+            for current in by_name.values():
+                lookup[current.name] = current
+                for alias in current.aliases:
+                    lookup.setdefault(alias, current)
+            return lookup
+
         for item in enrichment.get("characters", []):
             name = str(item.get("name", "")).strip()
             if not name or name == "旁白":
                 continue
-            profile = by_name.get(name)
+            aliases = [
+                str(value).strip()
+                for value in item.get("aliases", [])
+                if str(value).strip() and str(value).strip() != name
+            ][:8]
+            alias_lookup = rebuild_alias_lookup()
+            profile = alias_lookup.get(name)
+            if profile is None:
+                profile = next(
+                    (alias_lookup.get(alias) for alias in aliases if alias in alias_lookup),
+                    None,
+                )
             if profile is None:
                 profile = CharacterProfile(id=_character_id(name), name=name)
                 by_name[name] = profile
+            canonical_alias = [name] if name != profile.name else []
+            profile.aliases = list(
+                dict.fromkeys([*profile.aliases, *aliases, *canonical_alias])
+            )
             profile.gender = str(item.get("gender", profile.gender))
             profile.age_group = str(item.get("age_group", profile.age_group))
             profile.traits = [
@@ -156,12 +181,13 @@ class QwenNovelAnalyzer:
 
         assignments = enrichment.get("speaker_assignments", {})
         by_segment = {segment.id: segment for segment in baseline.segments}
+        alias_lookup = rebuild_alias_lookup()
         for segment_id, speaker_name in assignments.items():
             segment = by_segment.get(str(segment_id))
             name = str(speaker_name).strip()
             if segment is None or not name or name == "旁白":
                 continue
-            profile = by_name.get(name)
+            profile = alias_lookup.get(name)
             if profile is None:
                 profile = CharacterProfile(
                     id=_character_id(name),
@@ -170,6 +196,7 @@ class QwenNovelAnalyzer:
                     confidence=0.4,
                 )
                 by_name[name] = profile
+                alias_lookup[name] = profile
             segment.speaker_id = profile.id
 
         characters = [narrator, *by_name.values()]
@@ -184,4 +211,3 @@ class QwenNovelAnalyzer:
             analyzer="heuristic-v1 + qwen",
             warnings=list(dict.fromkeys(warnings)),
         )
-
