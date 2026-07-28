@@ -193,3 +193,10 @@ PPT 按当前安排继续暂缓，等进入路演制作阶段再从真实 Demo �
 - [现场演示脚本](docs/DEMO_SCRIPT.md)
 - [Qoder 使用记录](docs/QODER_LOG.md)
 - [贡献指南](CONTRIBUTING.md)
+#<<<<<<< agent/voxcast-alpha-0-2
+=======
+
+
+## Git Test
+#Testing write access from Keming-Hu.
+#>>>>>>> main
