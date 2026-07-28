@@ -71,7 +71,34 @@ class HeuristicNovelAnalyzerTests(unittest.TestCase):
         )
         self.assertEqual(profile.age_group, "unknown")
 
+    def test_nested_chinese_quotes_remain_one_dialogue(self) -> None:
+        rows = self.dialogue_rows(
+            "林夏说：“她只留下一句『别回头。』然后就走了。”"
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "林夏")
+        self.assertEqual(
+            rows[0][1],
+            "她只留下一句『别回头。』然后就走了。",
+        )
+
+    def test_nested_same_style_quotes_use_balanced_stack(self) -> None:
+        rows = self.dialogue_rows("陈默说：“外层“内层”仍在外层。”")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1], "外层“内层”仍在外层。")
+
+    def test_unclosed_quote_is_kept_as_narration_with_warning(self) -> None:
+        result = self.analyzer.analyze("林夏说：“这句话没有结束。")
+        self.assertFalse(
+            any(segment.kind == "dialogue" for segment in result.segments)
+        )
+        self.assertTrue(any("未闭合引号" in warning for warning in result.warnings))
+
+    def test_ascii_double_quotes_are_supported(self) -> None:
+        rows = self.dialogue_rows('陈默说："我们出发。"')
+        self.assertEqual(rows[0][0], "陈默")
+        self.assertEqual(rows[0][1], "我们出发。")
+
 
 if __name__ == "__main__":
     unittest.main()
-

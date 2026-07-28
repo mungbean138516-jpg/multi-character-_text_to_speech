@@ -1,4 +1,3 @@
-"""Multi-character audiobook MVP."""
+"""Multi-character audiobook alpha."""
 
-__version__ = "0.1.0"
-
+__version__ = "0.2.0"

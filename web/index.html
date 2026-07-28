@@ -42,7 +42,7 @@
         <div class="eyebrow"><span>AI CASTING ENGINE</span> · 小说不该只有一个声音</div>
         <h1>让每个角色，<em>真正开口。</em></h1>
         <p>
-          粘贴一段小说，AI 自动拆出旁白与对话、识别人物特质、分配适合的声线。
+          粘贴或导入一段小说，AI 自动拆出旁白与对话、识别人物特质、分配适合的声线。
           你可以先纠错和换角，再生成一段真正有角色感的多人听书。
         </p>
         <div class="pipeline" aria-label="工作流程">
@@ -65,17 +65,35 @@
               <p>首版建议一次使用 500–4,000 字；支持 “ ”、「 」和『 』对话。</p>
             </div>
           </div>
-          <button id="loadDemoButton" class="text-button" type="button">
-            载入原创演示文本
-          </button>
+          <div class="input-source-actions">
+            <button id="importFileButton" class="secondary-button compact" type="button">
+              导入 TXT
+            </button>
+            <input
+              id="fileInput"
+              type="file"
+              accept=".txt,text/plain"
+              hidden
+            />
+            <button id="loadDemoButton" class="text-button" type="button">
+              载入原创演示文本
+            </button>
+          </div>
         </div>
         <label class="sr-only" for="sourceText">小说文本</label>
         <textarea
           id="sourceText"
           maxlength="50000"
           spellcheck="false"
-          placeholder="把你有权使用的小说文本粘贴在这里……"
+          placeholder="把你有权使用的小说文本粘贴或拖入这里……"
         ></textarea>
+        <div class="source-meta">
+          <span id="fileMeta">支持 UTF-8、UTF-16 与 GB18030 编码的 TXT</span>
+          <span id="draftStatus" class="draft-status">本机草稿尚未保存</span>
+          <button id="clearDraftButton" class="text-button subtle" type="button">
+            删除保存副本
+          </button>
+        </div>
         <div class="input-footer">
           <span id="characterCounter">0 / 50,000 字</span>
           <div class="input-actions">
@@ -148,23 +166,46 @@
             </div>
           </div>
           <div class="render-actions">
+            <label class="inline-field output-field">
+              <span>导出</span>
+              <select id="outputFormat">
+                <option value="wav">WAV 无损</option>
+                <option value="mp3">MP3 128 kbps</option>
+              </select>
+            </label>
             <button id="demoRenderButton" class="secondary-button wide" type="button">
-              生成离线链路检测音
+              <span>生成离线链路检测音</span>
             </button>
             <button id="dashscopeRenderButton" class="primary-button wide" type="button">
               <span>百炼真实合成</span><b>✦</b>
+            </button>
+          </div>
+          <div id="renderPlan" class="render-plan">
+            完成选角后，这里会显示未缓存字符、请求数和费用预估。
+          </div>
+          <div class="retry-row">
+            <button id="refreshPlanButton" class="text-button subtle" type="button">
+              刷新预算
+            </button>
+            <button id="retryRenderButton" class="secondary-button" type="button" hidden>
+              仅重试失败片段
             </button>
           </div>
           <div id="audioResult" class="audio-result" hidden>
             <div>
               <span class="audio-icon">◉</span>
               <div>
-                <strong>试听已生成</strong>
+                <strong id="audioTitle">试听已生成</strong>
                 <small id="audioMeta"></small>
               </div>
             </div>
             <audio id="resultAudio" controls preload="metadata"></audio>
-            <a id="downloadLink" class="download-link" download>下载 WAV ↓</a>
+            <div class="download-links">
+              <a id="downloadLink" class="download-link" download>下载 WAV ↓</a>
+              <a id="wavDownloadLink" class="download-link secondary-download" download hidden>
+                同时下载 WAV
+              </a>
+            </div>
           </div>
         </section>
       </section>
@@ -178,11 +219,10 @@
     </main>
 
     <footer>
-      <span>声场 VoxCast · MVP 0.1</span>
+      <span>声场 VoxCast · Alpha 0.2</span>
       <span>AI 辅助选角，最终决定权始终属于创作者。</span>
     </footer>
 
     <script src="/app.js" defer></script>
   </body>
 </html>
-

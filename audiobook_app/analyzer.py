@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
+from dataclasses import dataclass
 from hashlib import sha1
 
 from .models import AnalysisResult, CharacterProfile, ScriptSegment
@@ -9,7 +10,8 @@ from .voices import cast_characters
 
 
 NARRATOR_ID = "narrator"
-QUOTE_RE = re.compile(r'[“「『"]([^”」』"]+)[”」』"]', re.DOTALL)
+OPEN_TO_CLOSE = {"“": "”", "「": "」", "『": "』"}
+CLOSE_TO_OPEN = {value: key for key, value in OPEN_TO_CLOSE.items()}
 SPEECH_VERBS = (
     "说道",
     "问道",
@@ -170,6 +172,69 @@ TRAIT_MARKERS = {
     "胆怯": "胆怯",
     "急促": "急切",
 }
+
+
+@dataclass(frozen=True)
+class DialogueSpan:
+    full_start: int
+    content_start: int
+    content_end: int
+    full_end: int
+
+
+def find_dialogue_spans(text: str) -> tuple[list[DialogueSpan], list[str]]:
+    """Return top-level, correctly paired quote spans.
+
+    Nested Chinese quote pairs remain inside their outer dialogue instead of
+    being split into unrelated fragments. ASCII double quotes are treated as a
+    toggle because the opening and closing glyph are identical.
+    """
+
+    spans: list[DialogueSpan] = []
+    stack: list[tuple[str, int]] = []
+    root_start = -1
+    unmatched_closers = 0
+
+    for index, character in enumerate(text):
+        if character == '"':
+            if stack and stack[-1][0] == '"':
+                stack.pop()
+                if not stack:
+                    spans.append(
+                        DialogueSpan(root_start, root_start + 1, index, index + 1)
+                    )
+                    root_start = -1
+            else:
+                if not stack:
+                    root_start = index
+                stack.append((character, index))
+            continue
+
+        if character in OPEN_TO_CLOSE:
+            if not stack:
+                root_start = index
+            stack.append((character, index))
+            continue
+
+        opening = CLOSE_TO_OPEN.get(character)
+        if opening is None:
+            continue
+        if stack and stack[-1][0] == opening:
+            stack.pop()
+            if not stack:
+                spans.append(
+                    DialogueSpan(root_start, root_start + 1, index, index + 1)
+                )
+                root_start = -1
+        else:
+            unmatched_closers += 1
+
+    warnings: list[str] = []
+    if stack:
+        warnings.append("检测到未闭合引号；未闭合部分暂按旁白保留，请检查原文")
+    if unmatched_closers:
+        warnings.append("检测到无法配对的右引号；请检查原文引号格式")
+    return spans, warnings
 
 
 def _character_id(name: str) -> str:
@@ -367,13 +432,15 @@ class HeuristicNovelAnalyzer:
                     )
                 )
 
-        for match in QUOTE_RE.finditer(normalized):
-            append_narration(cursor, match.start())
-            dialogue = match.group(1).strip()
+        quote_spans, quote_warnings = find_dialogue_spans(normalized)
+        warnings.extend(quote_warnings)
+        for span in quote_spans:
+            append_narration(cursor, span.full_start)
+            dialogue = normalized[span.content_start : span.content_end].strip()
             speaker_name, confidence, evidence = _infer_speaker(
                 normalized,
-                match.start(),
-                match.end(),
+                span.full_start,
+                span.full_end,
                 recent_speakers,
                 profiles_by_name,
             )
@@ -399,11 +466,11 @@ class HeuristicNovelAnalyzer:
                     speaker_id=profile.id,
                     emotion=infer_emotion(dialogue),
                     confidence=confidence,
-                    source_start=match.start(1),
-                    source_end=match.end(1),
+                    source_start=span.content_start,
+                    source_end=span.content_end,
                 )
             )
-            cursor = match.end()
+            cursor = span.full_end
 
         append_narration(cursor, len(normalized))
         if not segments:

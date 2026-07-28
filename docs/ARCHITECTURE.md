@@ -8,6 +8,8 @@
 4. **LLM 不直接选择 voice ID。** 模型输出语义标签，由 `voices.py` 匹配供应商目录。
 5. **真实 API 可拔插。** 业务管线只依赖 `TTSProvider.synthesize()`。
 6. **先下载，再拼接。** 百炼返回的临时 URL 不作为项目长期资源。
+7. **编辑优先于再猜。** 人工修改进入 `locked`，重复角色可并入同一 alias 档案。
+8. **缓存按内容而不是序号。** 文本、情绪、voice 与 provider 配置共同决定缓存键。
 
 ## 请求链路
 
@@ -16,18 +18,19 @@ sequenceDiagram
     participant U as 用户
     participant W as 网页工作台
     participant A as 分析器
-    participant C as 选角器
+    participant R as 渲染与缓存
     participant T as TTS Provider
-    participant M as WAV 拼接器
 
-    U->>W: 粘贴小说
+    U->>W: 粘贴 / 导入小说
     W->>A: POST /api/analyze
     A-->>W: 角色 + 台词 + 置信度
-    W->>C: 人工修改后保存角色声线
+    U->>W: 修改角色 / 台词并锁定
     U->>W: 确认生成
-    W->>T: 逐段合成
-    T-->>M: 统一 24kHz WAV
-    M-->>W: audiobook.wav + manifest
+    W->>R: POST /api/render
+    R->>R: 查询内容哈希缓存
+    R->>T: 只合成未缓存片段
+    T-->>R: 统一 24kHz WAV
+    R-->>W: WAV / MP3 + manifest
     W-->>U: 播放 / 下载
 ```
 
@@ -35,14 +38,14 @@ sequenceDiagram
 
 ### `analyzer.py`
 
-输入：原始 UTF-8 文本。
+输入：已经解码成 Unicode 的原始文本。
 
 输出：`AnalysisResult`。
 
 职责：
 
 - 规范换行；
-- 识别引号内对话；
+- 用配对堆栈识别引号内对话与嵌套引号；
 - 保留字符位置；
 - 识别发言动词前后的候选人物；
 - 生成本地置信度；
@@ -56,7 +59,7 @@ sequenceDiagram
 
 - 用 OpenAI 兼容 HTTP 接口请求严格 JSON；
 - 让小说文本始终处于“数据”位置，系统提示不接受原文中的指令；
-- 合并角色和 speaker assignment；
+- 合并角色、aliases 和 speaker assignment；
 - 网络、鉴权或 JSON 失败时保留本地结果。
 
 ### `voices.py`
@@ -94,10 +97,21 @@ synthesize(
 ### `audio.py`
 
 - 合成前检查字符和片段限制；
+- 根据 provider、文本、情绪和 voice 生成 SHA-256 缓存键；
+- 预算阶段统计缓存命中、未缓存请求与计费字符；
+- 单段失败时保留其他成功缓存，重新提交只合成缺失片段；
 - 创建隔离 job 目录；
 - 校验所有 WAV 的通道、位深和采样率；
 - 片段间插入 220ms 静音；
-- 写入 `audiobook.wav` 与 `manifest.json`。
+- 写入 `audiobook.wav`、可选 `audiobook.mp3` 与 `manifest.json`。
+
+### `textio.py`
+
+- 识别 UTF-8 BOM、UTF-16 LE / BE；
+- 无 BOM 时先尝试 UTF-8，再尝试 GB18030；
+- 拒绝控制字符比例异常的二进制输入。
+
+浏览器端实现相同的 TXT 解码顺序，服务端 CLI 则复用该模块。
 
 ## 核心数据
 
@@ -107,12 +121,14 @@ synthesize(
 {
   "id": "char_123",
   "name": "林夏",
+  "aliases": ["小夏"],
   "gender": "unknown",
   "age_group": "unknown",
   "traits": ["轻柔"],
   "voice_id": "adult_f_soft",
   "confidence": 0.62,
-  "evidence": ["林夏轻声说"]
+  "evidence": ["林夏轻声说"],
+  "locked": true
 }
 ```
 
@@ -129,7 +145,8 @@ synthesize(
   "emotion": "neutral",
   "confidence": 0.92,
   "source_start": 56,
-  "source_end": 65
+  "source_end": 65,
+  "locked": true
 }
 ```
 
@@ -138,22 +155,25 @@ synthesize(
 ```text
 data/outputs/<job_id>/
   audiobook.wav
+  audiobook.mp3
   manifest.json
   segments/
     001_seg_001.wav
     002_seg_002.wav
+
+data/outputs/_cache/
+  ab/
+    <sha256>.wav
 ```
 
 该目录已加入 `.gitignore`。
 
 ## 下一轮技术改造
 
-- 用堆栈解析嵌套和跨段引号；
-- 增加角色 alias 图谱与人工 `locked` 字段；
+- 将浏览器本机草稿升级为可导入 / 导出的项目包；
+- 做跨章节角色 alias 图谱与 `locked` 继承；
 - 将相邻同角色短句合并，降低 API 调用次数；
-- 用内容哈希缓存未变化的片段；
-- 加后台队列、任务进度和失败重试；
+- 加后台队列、任务进度和跨进程失败恢复；
 - 只重生成改过角色或文本的片段；
 - 记录片段起止时间，生成 WebVTT / LRC；
-- 输出 MP3、M4B 与章节元数据。
-
+- 输出 M4B、封面与章节元数据。

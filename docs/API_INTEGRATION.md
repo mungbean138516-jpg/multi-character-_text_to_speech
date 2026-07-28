@@ -69,7 +69,8 @@ Content-Type: application/json
 - 系统音色、复刻音色和设计音色不能跨模型乱用；
 - 非流式响应给出的音频 URL 会过期，必须立即下载；
 - 真实费用以供应商控制台为准，不在前端硬编码；
-- 每个片段目前是一条请求，下一版会合并同角色相邻短句并加缓存。
+- 每个未缓存片段目前是一条请求；内容哈希缓存会跳过未变化片段；
+- 相邻同角色短句合并仍是下一阶段优化。
 
 官方资料：
 
@@ -132,5 +133,18 @@ provider_model
 provider_request_id
 ```
 
-限流、队列、指数退避、幂等 job ID 和预算上限必须在正式版加入。多个 Key 可能仍共享账号级限流，不能用“多建 Key”代替队列。
+Alpha 版的 `/api/render/plan` 已返回：
 
+```text
+segments
+cached_segments
+estimated_requests
+billable_characters
+estimated_billable_characters
+estimated_cost_cny
+```
+
+人民币估算只有在服务端配置
+`DASHSCOPE_TTS_PRICE_PER_10K_CNY` 后才显示；这个值应从当前供应商控制台确认，不能在代码里长期写死。真实账单仍是最终依据。
+
+渲染时每段最多尝试 `APP_TTS_MAX_ATTEMPTS` 次。若仍失败，任务返回 `partial`，成功段已进入缓存；用户重新提交时只会请求没有缓存的片段。正式版仍需加入队列、指数退避、幂等业务 job ID、缓存淘汰和预算硬上限。多个 Key 可能仍共享账号级限流，不能用“多建 Key”代替队列。

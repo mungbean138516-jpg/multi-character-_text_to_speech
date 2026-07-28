@@ -45,6 +45,15 @@ class DashScopeTTSProvider(TTSProvider):
                 "或 DASHSCOPE_TTS_ENDPOINT"
             )
 
+    def cache_identity(self) -> dict[str, object]:
+        return {
+            "provider": self.name,
+            "version": 1,
+            "model": self.model,
+            "format": "wav",
+            "sample_rate": 24000,
+        }
+
     def synthesize(
         self,
         segment: ScriptSegment,
@@ -83,7 +92,7 @@ class DashScopeTTSProvider(TTSProvider):
             if parsed.scheme not in {"https", "http"}:
                 raise RuntimeError("TTS 返回了不受支持的音频 URL")
             download_request = urllib.request.Request(
-                audio_url, headers={"User-Agent": "MultiVoiceAudiobook/0.1"}
+                audio_url, headers={"User-Agent": "MultiVoiceAudiobook/0.2"}
             )
             with urllib.request.urlopen(
                 download_request, timeout=self.timeout

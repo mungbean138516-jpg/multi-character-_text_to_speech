@@ -21,6 +21,13 @@ class DemoToneProvider(TTSProvider):
     name = "demo"
     sample_rate = 24_000
 
+    def cache_identity(self) -> dict[str, object]:
+        return {
+            "provider": self.name,
+            "version": 1,
+            "sample_rate": self.sample_rate,
+        }
+
     def synthesize(
         self,
         segment: ScriptSegment,
@@ -53,4 +60,3 @@ class DemoToneProvider(TTSProvider):
             "characters": len(segment.text),
             "note": "离线诊断音，不是真实 TTS",
         }
-
