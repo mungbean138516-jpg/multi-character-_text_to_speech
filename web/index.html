@@ -251,11 +251,57 @@
           <div id="renderPlan" class="render-plan">
             完成角色识别后，这里会显示预计生成内容。
           </div>
-          <div class="retry-row" id="retryRow">
-            <button id="retryRenderButton" class="secondary-button" type="button" hidden>
-              继续完成未生成的句子
-            </button>
-          </div>
+          <section id="renderJobPanel" class="render-job-panel" hidden>
+            <div class="render-job-heading">
+              <div>
+                <span class="render-job-dot" aria-hidden="true"></span>
+                <div>
+                  <strong id="renderJobStatus">等待开始</strong>
+                  <small>生成会在后台继续，可以切换章节或刷新页面。</small>
+                </div>
+              </div>
+              <div class="render-job-numbers">
+                <strong id="renderProgressLabel">0 / 0 句</strong>
+                <span id="playableCount">暂无可播放内容</span>
+              </div>
+            </div>
+            <progress id="renderProgress" max="100" value="0">0%</progress>
+            <div class="render-job-controls">
+              <audio
+                id="progressiveAudio"
+                controls
+                preload="metadata"
+                hidden
+              ></audio>
+              <button
+                id="playReadyButton"
+                class="secondary-button compact"
+                type="button"
+                disabled
+              >
+                ▶ 播放已完成内容
+              </button>
+              <button
+                id="pauseJobButton"
+                class="text-button subtle"
+                type="button"
+                hidden
+              >
+                暂停生成
+              </button>
+              <button
+                id="resumeJobButton"
+                class="secondary-button compact"
+                type="button"
+                hidden
+              >
+                继续生成
+              </button>
+            </div>
+            <small id="progressiveNowPlaying" class="progressive-now-playing">
+              第一批句子完成后即可播放。
+            </small>
+          </section>
           <details class="render-advanced">
             <summary>导出与开发检查</summary>
             <div class="render-advanced-body">
@@ -303,7 +349,7 @@
     </main>
 
     <footer>
-      <span>声场 VoxCast · Alpha 0.4</span>
+      <span>声场 VoxCast · Alpha 0.5</span>
       <span>AI 自动选角，你随时可以纠正。</span>
     </footer>
 

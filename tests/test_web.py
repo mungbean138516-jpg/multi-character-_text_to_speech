@@ -68,6 +68,19 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("indexedDB", javascript)
         self.assertIn("await restoreDraft()", javascript)
 
+    def test_progressive_render_controls_and_refresh_recovery_are_present(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="renderJobPanel"', html)
+        self.assertIn('id="renderProgress"', html)
+        self.assertIn("播放已完成内容", html)
+        self.assertIn("暂停生成", html)
+        self.assertIn('requestJson("/api/render/jobs"', javascript)
+        self.assertIn("/pause", javascript)
+        self.assertIn("/resume", javascript)
+        self.assertIn("render_job_ids", javascript)
+        self.assertIn("restoreRenderJobForCurrentContext", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

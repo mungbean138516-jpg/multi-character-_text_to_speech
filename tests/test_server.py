@@ -1,11 +1,11 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +26,9 @@ class ServerIntegrationTests(unittest.TestCase):
         cls.previous_cache = app_server.CACHE_ROOT
         app_server.OUTPUT_ROOT = Path(cls.temporary.name) / "outputs"
         app_server.CACHE_ROOT = Path(cls.temporary.name) / "cache"
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        cls.server = app_server.AudiobookHTTPServer(
+            ("127.0.0.1", 0), QuietHandler
+        )
         cls.thread = threading.Thread(
             target=cls.server.serve_forever,
             daemon=True,
@@ -68,6 +70,11 @@ class ServerIntegrationTests(unittest.TestCase):
             method="POST",
         )
         with urllib.request.urlopen(request) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @classmethod
+    def get_json(cls, path: str) -> dict:
+        with urllib.request.urlopen(cls.base_url + path) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def test_analyze_render_download_and_cached_plan(self) -> None:
@@ -129,11 +136,61 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertGreater(len(audio), 44)
 
     def test_private_cache_path_is_not_served(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as context:
-            urllib.request.urlopen(
-                self.base_url + "/outputs/_cache/not-public.wav"
+        for private_root in ("_cache", "_jobs"):
+            with self.subTest(private_root=private_root):
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(
+                        self.base_url
+                        + f"/outputs/{private_root}/not-public.json"
+                    )
+                self.assertEqual(context.exception.code, 404)
+
+    def test_background_render_job_exposes_playable_segments(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {
+                "mode": "local",
+                "text": "夜色落下。林夏说：“我们出发吧。”远处传来汽笛声。",
+            },
+        )
+        created = self.post(
+            "/api/render/jobs",
+            {
+                "provider": "demo",
+                "format": "wav",
+                "analysis": analysis,
+                "chapter_id": "chapter_1",
+                "chapter_title": "第一章",
+            },
+        )
+        deadline = time.monotonic() + 3
+        result = created
+        while (
+            result["status"] in {"queued", "running", "pausing"}
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+            result = self.get_json(
+                f"/api/render/jobs/{created['job_id']}"
             )
-        self.assertEqual(context.exception.code, 404)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["progress_percent"], 100)
+        self.assertEqual(
+            len(result["playable_segments"]),
+            result["total_segments"],
+        )
+        first_audio_url = result["playable_segments"][0]["audio_url"]
+        with urllib.request.urlopen(
+            self.base_url + first_audio_url
+        ) as response:
+            first_audio = response.read()
+        with urllib.request.urlopen(
+            self.base_url + result["audio_url"]
+        ) as response:
+            final_audio = response.read()
+        self.assertGreater(len(first_audio), 44)
+        self.assertGreater(len(final_audio), len(first_audio))
 
     def test_epub_import_returns_book_project(self) -> None:
         project = self.post_bytes(

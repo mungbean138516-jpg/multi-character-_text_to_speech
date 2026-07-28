@@ -2,7 +2,7 @@
 
 ## 架构原则
 
-1. **规则先行，模型补语义。** 引号和明确发言动词由确定性代码处理；别名与指代交给千问。
+1. **规则先行，模型补语义。** 引号和明确发言动词由确定性代码处理；复杂台词归属由千问给建议，用户随时可以纠错。
 2. **不确定性是数据。** `confidence` 和 `evidence` 会进入 UI，不在后端静默吞掉。
 3. **角色特质与台词情绪分开。** “温暖的成年女声”是角色基线，“愤怒”是当前一句的状态。
 4. **LLM 不直接选择 voice ID。** 模型输出语义标签，由 `voices.py` 匹配供应商目录。
@@ -23,6 +23,7 @@ sequenceDiagram
     participant U as 用户
     participant W as 网页工作台
     participant A as 分析器
+    participant J as 后台任务
     participant R as 渲染与缓存
     participant T as TTS Provider
 
@@ -33,12 +34,17 @@ sequenceDiagram
     U->>W: 修改角色 / 台词并锁定
     U->>W: 可选：纠正全书发音
     U->>W: 确认生成
-    W->>R: POST /api/render
-    R->>R: 查询内容哈希缓存
-    R->>T: 只合成未缓存片段
-    T-->>R: 统一 24kHz WAV
-    R-->>W: WAV / MP3 + manifest
-    W-->>U: 播放 / 下载
+    W->>J: POST /api/render/jobs
+    J-->>W: 202 + job_id
+    loop 当前章节的每一句
+        J->>R: 查询内容哈希缓存
+        R->>T: 只合成未缓存片段
+        T-->>R: 统一 24kHz WAV
+        W->>J: GET 任务进度
+        J-->>W: 已完成片段 URL
+        W-->>U: 第一批完成即可播放
+    end
+    J-->>W: 完整 WAV / MP3 + manifest
 ```
 
 ## 模块边界
@@ -110,9 +116,19 @@ synthesize(
 - 单段失败时保留其他成功缓存，重新提交只合成缺失片段；
 - 支持只把一个 `ScriptSegment` 送入同一渲染与缓存管线；
 - 创建隔离 job 目录；
+- 每完成一句就回调可播放片段；在句子边界检查暂停请求；
 - 校验所有 WAV 的通道、位深和采样率；
 - 片段间插入 220ms 静音；
 - 写入 `audiobook.wav`、可选 `audiobook.mp3` 与 `manifest.json`。
+
+### `jobs.py`
+
+- 用受限并发线程池运行当前章节任务；
+- 只向前端公开进度、状态与输出 URL，不在任务快照中保存分析原文；
+- 支持排队、逐句进度、当前句结束后暂停、继续和部分失败补齐；
+- 将小型状态快照原子写入私有 `_jobs` 目录；
+- 浏览器通过本机草稿保存 `job_id`，刷新后重新查询同一任务；
+- Python 服务整体重启后只保留已生成片段，不声称可以自动续跑。
 
 ### `textio.py`
 
@@ -250,15 +266,17 @@ data/outputs/<job_id>/
 data/outputs/_cache/
   ab/
     <sha256>.wav
+
+data/outputs/_jobs/
+  <job_id>.json
 ```
 
-该目录已加入 `.gitignore`。
+输出根目录已加入 `.gitignore`；`_cache` 与 `_jobs` 都不会通过 `/outputs/` 路由暴露。
 
 ## 下一轮技术改造
 
-- 将明确别名匹配升级为带人工确认的跨章指代图谱；
 - 将相邻同角色短句合并，降低 API 调用次数；
-- 加后台队列、任务进度和跨进程失败恢复；
-- 首批句子完成后即可播放；
+- 给单句音频增加版本号，并原子替换章节播放列表中的旧版本；
+- 增加可持久化的任务输入与幂等恢复，再处理服务进程重启续跑；
 - 记录片段起止时间，生成 WebVTT / LRC；
 - 输出 M4B、封面与章节元数据。
