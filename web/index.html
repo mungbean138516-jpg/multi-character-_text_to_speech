@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="自动识别中文小说角色，为旁白与人物匹配不同声线并生成多人听书。"
+    />
+    <title>声场 VoxCast · 多角色 AI 听书</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="声场首页">
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span>
+          <strong>声场</strong>
+          <small>VOXCAST</small>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <span id="systemStatus" class="status-pill">
+          <span class="status-dot"></span>
+          正在检查服务
+        </span>
+        <a
+          class="ghost-link"
+          href="https://github.com/mungbean138516-jpg/multi-character-_text_to_speech"
+          target="_blank"
+          rel="noreferrer"
+        >GitHub ↗</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow"><span>AI CASTING ENGINE</span> · 小说不该只有一个声音</div>
+        <h1>让每个角色，<em>真正开口。</em></h1>
+        <p>
+          粘贴一段小说，AI 自动拆出旁白与对话、识别人物特质、分配适合的声线。
+          你可以先纠错和换角，再生成一段真正有角色感的多人听书。
+        </p>
+        <div class="pipeline" aria-label="工作流程">
+          <span class="pipeline-step active"><b>01</b> 文本</span>
+          <i></i>
+          <span class="pipeline-step"><b>02</b> 角色</span>
+          <i></i>
+          <span class="pipeline-step"><b>03</b> 选角</span>
+          <i></i>
+          <span class="pipeline-step"><b>04</b> 成片</span>
+        </div>
+      </section>
+
+      <section class="workspace-card input-card">
+        <div class="card-heading">
+          <div>
+            <span class="section-number">01</span>
+            <div>
+              <h2>放入小说片段</h2>
+              <p>首版建议一次使用 500–4,000 字；支持 “ ”、「 」和『 』对话。</p>
+            </div>
+          </div>
+          <button id="loadDemoButton" class="text-button" type="button">
+            载入原创演示文本
+          </button>
+        </div>
+        <label class="sr-only" for="sourceText">小说文本</label>
+        <textarea
+          id="sourceText"
+          maxlength="50000"
+          spellcheck="false"
+          placeholder="把你有权使用的小说文本粘贴在这里……"
+        ></textarea>
+        <div class="input-footer">
+          <span id="characterCounter">0 / 50,000 字</span>
+          <div class="input-actions">
+            <label class="inline-field">
+              <span>分析方式</span>
+              <select id="analyzerMode">
+                <option value="local">本地规则 · 免费</option>
+                <option value="qwen">千问增强 · 更懂指代</option>
+              </select>
+            </label>
+            <button id="analyzeButton" class="primary-button" type="button">
+              <span>开始选角</span>
+              <b>→</b>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div id="messageBox" class="message-box" role="status" hidden></div>
+
+      <section id="resultSection" hidden>
+        <div class="result-intro">
+          <div>
+            <span class="section-number">02</span>
+            <div>
+              <h2>AI 选角台</h2>
+              <p id="analysisSummary">等待分析结果。</p>
+            </div>
+          </div>
+          <div class="legend">
+            <span><i class="confidence-high"></i> 高置信度</span>
+            <span><i class="confidence-medium"></i> 建议确认</span>
+            <span><i class="confidence-low"></i> 需要纠错</span>
+          </div>
+        </div>
+
+        <div id="warningList" class="warning-list" hidden></div>
+        <div id="characterGrid" class="character-grid"></div>
+
+        <section class="workspace-card script-card">
+          <div class="card-heading">
+            <div>
+              <span class="section-number">03</span>
+              <div>
+                <h2>台词轨道</h2>
+                <p>AI 先完成初稿；说话人不对时，直接在这一行改掉。</p>
+              </div>
+            </div>
+            <div class="preview-actions">
+              <button id="playButton" class="secondary-button" type="button">
+                ▶ 浏览器多人试听
+              </button>
+              <button id="stopButton" class="icon-button" type="button" title="停止试听">
+                ■
+              </button>
+            </div>
+          </div>
+          <div id="scriptTimeline" class="script-timeline"></div>
+        </section>
+
+        <section class="render-panel">
+          <div class="render-copy">
+            <span class="section-number">04</span>
+            <div>
+              <h2>生成试听成片</h2>
+              <p>
+                先用离线诊断音检查“逐句生成 → 拼接 → 下载”链路；配置百炼后可生成真实语音。
+              </p>
+              <div id="providerNotice" class="provider-notice"></div>
+            </div>
+          </div>
+          <div class="render-actions">
+            <button id="demoRenderButton" class="secondary-button wide" type="button">
+              生成离线链路检测音
+            </button>
+            <button id="dashscopeRenderButton" class="primary-button wide" type="button">
+              <span>百炼真实合成</span><b>✦</b>
+            </button>
+          </div>
+          <div id="audioResult" class="audio-result" hidden>
+            <div>
+              <span class="audio-icon">◉</span>
+              <div>
+                <strong>试听已生成</strong>
+                <small id="audioMeta"></small>
+              </div>
+            </div>
+            <audio id="resultAudio" controls preload="metadata"></audio>
+            <a id="downloadLink" class="download-link" download>下载 WAV ↓</a>
+          </div>
+        </section>
+      </section>
+
+      <section class="trust-strip">
+        <div><strong>文本有据</strong><span>每个角色保留识别证据与置信度</span></div>
+        <div><strong>人工可控</strong><span>角色、台词归属和声线都能修改</span></div>
+        <div><strong>密钥后置</strong><span>API Key 只在服务端环境变量中使用</span></div>
+        <div><strong>版权优先</strong><span>仅处理自有、授权或公版文本</span></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>声场 VoxCast · MVP 0.1</span>
+      <span>AI 辅助选角，最终决定权始终属于创作者。</span>
+    </footer>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
+
