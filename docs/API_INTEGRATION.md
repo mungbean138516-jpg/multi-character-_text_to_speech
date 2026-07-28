@@ -87,6 +87,19 @@ Content-Type: application/json
 
 `POST /api/render/segment` 接收完整项目和 `segment_id`，只抽出该句进入标准渲染管线。它仍执行付费确认、字符限制、重试、WAV 校验和内容缓存；下一次生成全书时会复用这句结果。
 
+## 书籍项目与跨章角色
+
+`POST /api/import/epub` 直接接收 `application/epub+zip` 二进制，并返回版本化的 `BookProject`；EPUB 不会被转成 base64 塞进 JSON。浏览器随后只把当前章节送到 `/api/analyze`，避免一次把几十万字交给大模型。
+
+`/api/analyze` 的可选 `character_registry` 包含本书已确认的角色。响应会返回更新后的同名字段：
+
+- 明确姓名或别名匹配时沿用稳定 ID 和 voice；
+- `locked=true` 的人工资料优先；
+- 未匹配人物在容量内加入主要角色；
+- 超过 10 位后使用“其他角色”，仍保留全部台词。
+
+这套数据属于产品层，不绑定百炼。未来接入第二家 TTS 时，角色身份、别名和人工纠错仍然有效。
+
 官方资料：
 
 - [非实时 TTS HTTP API](https://help.aliyun.com/zh/model-studio/cosyvoice-tts-http-api)

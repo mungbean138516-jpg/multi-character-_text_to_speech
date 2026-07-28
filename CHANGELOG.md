@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 Book Project Alpha
+
+### 用户可见
+
+- 支持导入 EPUB，读取书名、作者和书脊顺序，超长正文自动拆成可分析章节。
+- 新增书籍章节导航、分析完成标记、上一章 / 下一章和当前角色容量提示。
+- 跨章节保留人物 ID、别名、声音和人工锁定；旁白之外最多 10 位主要角色。
+- 超出上限的新人物归入“其他角色”，保留原台词并显示可纠正提示。
+- 支持 `.voxcast.json` 项目备份导入 / 导出，包含章节、角色、纠错和发音记忆。
+- 多章草稿改用 IndexedDB 保存，保留 localStorage 兼容回退。
+- 同一 CosyVoice 模型的精选音色从 11 个扩至 24 个。
+
+### 工程
+
+- 新增安全 EPUB 解包、OPF / spine 解析、正文提取和异常压缩保护。
+- 新增 `BookProject`、`BookChapter` 与 `CharacterRegistry` 数据合同。
+- `/api/analyze` 可接收并返回书级角色注册表；`POST /api/import/epub` 接收 EPUB 二进制。
+- 测试从 33 个增加到 47 个，覆盖 EPUB、书籍项目、跨章一致性和声音目录合同。
+
 ## 0.3.0 Consumer Alpha
 
 ### 用户可见

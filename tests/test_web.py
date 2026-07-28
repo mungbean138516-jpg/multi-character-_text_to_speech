@@ -57,6 +57,17 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("重做这句", javascript)
         self.assertIn("高级设置", html)
 
+    def test_book_project_controls_and_storage_contract_are_present(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn(".epub", html)
+        self.assertIn('id="bookPanel"', html)
+        self.assertIn("打开书籍项目", html)
+        self.assertIn("下载项目备份", html)
+        self.assertIn("voxcast-book-project", javascript)
+        self.assertIn("indexedDB", javascript)
+        self.assertIn("await restoreDraft()", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

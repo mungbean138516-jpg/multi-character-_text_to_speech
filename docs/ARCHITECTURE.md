@@ -12,6 +12,9 @@
 8. **缓存按内容而不是序号。** 文本、情绪、voice 与 provider 配置共同决定缓存键。
 9. **显示文本与朗读文本分离。** 发音词典只改变送入语音服务的 `spoken_text`，不改小说原文。
 10. **技术复杂度不进入主流程。** provider、缓存键、请求数和诊断音只面向开发者。
+11. **章节是工作单元，书籍是记忆边界。** 单次分析只处理当前章，角色与发音规则保存在 `BookProject`。
+12. **人工判断跨章优先。** `locked` 角色的姓名、类型与声音不会被后续章节的模型猜测覆盖。
+13. **长篇输入先做安全解析。** EPUB 在进入分析器前限制压缩包路径、文件数、解压大小和异常压缩比。
 
 ## 请求链路
 
@@ -23,9 +26,10 @@ sequenceDiagram
     participant R as 渲染与缓存
     participant T as TTS Provider
 
-    U->>W: 粘贴 / 导入小说
+    U->>W: 粘贴 / 导入 TXT 或 EPUB
+    W->>W: 解析章节并恢复书级角色记忆
     W->>A: POST /api/analyze
-    A-->>W: 角色 + 台词 + 置信度
+    A-->>W: 角色 + 台词 + 更新后的角色注册表
     U->>W: 修改角色 / 台词并锁定
     U->>W: 可选：纠正全书发音
     U->>W: 确认生成
@@ -118,6 +122,35 @@ synthesize(
 
 浏览器端实现相同的 TXT 解码顺序，服务端 CLI 则复用该模块。
 
+### `epub.py`
+
+输入：原始 EPUB 二进制。
+
+输出：包含有序章节的 `BookProject`。
+
+职责：
+
+- 校验 ZIP 条目路径，拒绝绝对路径、`..`、重复路径、加密内容和异常压缩比；
+- 限制条目数量、总解压大小与单文件大小；
+- 从 `META-INF/container.xml` 找到 OPF；
+- 读取标题、作者、manifest 与 spine 阅读顺序；
+- 跳过脚本、样式、导航和空页面，提取可朗读正文；
+- 将超长章节按段落和中文句末标点拆到 45,000 字以内。
+
+### `books.py`
+
+- 定义带 schema / version 的 `BookProject` 与 `BookChapter`；
+- 验证章节 ID 唯一、总字数、发音词典和项目版本；
+- 负责 `.voxcast.json` 的稳定往返合同。
+
+### `registry.py`
+
+- 保存书级人物档案、累计台词数和次要角色名字；
+- 用“规范化姓名 / 明确别名完全相交”匹配跨章角色；
+- 保留已有稳定 ID 与声音，`locked` 人工资料优先；
+- 将当前章 segment 的临时 speaker ID 改写为书级 ID；
+- 强制旁白之外最多 10 位主要角色，溢出人物归入“其他角色”而不删除台词。
+
 ## 核心数据
 
 ### CharacterProfile
@@ -168,6 +201,33 @@ synthesize(
 
 界面显示和 manifest 的 `segment.text` 始终保留原文。供应商实际收到的文本写入 manifest 的可选 `spoken_text` 字段。发音规则变化只会让包含该词的片段产生新的内容缓存键。
 
+### BookProject
+
+```json
+{
+  "schema": "voxcast-book-project",
+  "version": 1,
+  "title": "北城来信",
+  "selected_chapter_id": "chapter_abc123",
+  "chapters": [
+    {
+      "id": "chapter_abc123",
+      "title": "第一章",
+      "text": "雨停了。",
+      "analysis": null
+    }
+  ],
+  "character_registry": {
+    "primary_limit": 10,
+    "characters": [],
+    "dialogue_counts": {}
+  },
+  "pronunciations": {}
+}
+```
+
+浏览器把多章项目保存在 IndexedDB；`.voxcast.json` 是用户可下载的可移植备份。它们都不包含 API Key 或供应商凭证。
+
 ### 单句重做
 
 ```text
@@ -196,8 +256,7 @@ data/outputs/_cache/
 
 ## 下一轮技术改造
 
-- EPUB 章节解析与项目 JSON 导入 / 导出；
-- 做跨章节角色 alias 图谱与 `locked` 继承；
+- 将明确别名匹配升级为带人工确认的跨章指代图谱；
 - 将相邻同角色短句合并，降低 API 调用次数；
 - 加后台队列、任务进度和跨进程失败恢复；
 - 首批句子完成后即可播放；

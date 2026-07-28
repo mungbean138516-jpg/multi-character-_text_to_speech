@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 
 from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
+from .epub import parse_epub
 from .models import AnalysisResult
 from .providers import (
     DashScopeTTSProvider,
@@ -19,6 +20,7 @@ from .providers import (
     dashscope_tts_is_configured,
 )
 from .qwen import QwenNovelAnalyzer, qwen_is_configured
+from .registry import CharacterRegistry
 from .voices import catalog_as_dicts
 
 
@@ -31,9 +33,14 @@ CACHE_ROOT = Path(
     os.getenv("APP_TTS_CACHE_DIR", str(OUTPUT_ROOT / "_cache"))
 ).resolve()
 MAX_REQUEST_BYTES = int(os.getenv("APP_MAX_REQUEST_BYTES", "2000000"))
+MAX_EPUB_BYTES = int(os.getenv("APP_MAX_EPUB_BYTES", "20000000"))
 MAX_ANALYZE_CHARACTERS = int(os.getenv("APP_MAX_ANALYZE_CHARACTERS", "50000"))
 MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
 MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
+MAX_PRIMARY_CHARACTERS = max(
+    1,
+    min(10, int(os.getenv("APP_MAX_PRIMARY_CHARACTERS", "10"))),
+)
 TTS_MAX_ATTEMPTS = int(os.getenv("APP_TTS_MAX_ATTEMPTS", "2"))
 
 
@@ -64,7 +71,7 @@ def _provider_for_name(name: str):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.3"
+    server_version = "MultiVoiceAudiobook/0.4"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -87,13 +94,19 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_json(self) -> dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
+    def _read_body(self, max_bytes: int) -> bytes:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Content-Length 格式错误") from exc
         if content_length <= 0:
             raise ValueError("请求体不能为空")
-        if content_length > MAX_REQUEST_BYTES:
+        if content_length > max_bytes:
             raise ValueError("请求体过大")
-        raw = self.rfile.read(content_length)
+        return self.rfile.read(content_length)
+
+    def _read_json(self) -> dict[str, Any]:
+        raw = self._read_body(MAX_REQUEST_BYTES)
         value = json.loads(raw.decode("utf-8"))
         if not isinstance(value, dict):
             raise ValueError("请求体必须是 JSON 对象")
@@ -102,7 +115,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.3.0"})
+            self._send_json({"status": "ok", "version": "0.4.0"})
             return
         if path == "/api/config":
             self._send_json(
@@ -145,12 +158,21 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     },
                     "limits": {
                         "analyze_characters": MAX_ANALYZE_CHARACTERS,
+                        "epub_bytes": MAX_EPUB_BYTES,
+                        "primary_characters": MAX_PRIMARY_CHARACTERS,
                         "render_characters": MAX_RENDER_CHARACTERS,
                         "render_segments": MAX_RENDER_SEGMENTS,
+                    },
+                    "imports": {
+                        "txt": True,
+                        "epub": True,
+                        "voxcast_project": True,
                     },
                     "features": {
                         "pronunciation_dictionary": True,
                         "single_segment_render": True,
+                        "book_projects": True,
+                        "cross_chapter_characters": True,
                     },
                 }
             )
@@ -163,6 +185,14 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         try:
+            if path == "/api/import/epub":
+                raw = self._read_body(MAX_EPUB_BYTES)
+                source_name = unquote(
+                    self.headers.get("X-VoxCast-Filename", "book.epub")
+                )
+                self._handle_import_epub(raw, source_name)
+                return
+
             payload = self._read_json()
             if path == "/api/analyze":
                 self._handle_analyze(payload)
@@ -216,7 +246,20 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             analysis = HeuristicNovelAnalyzer().analyze(text)
         else:
             raise ValueError("未知分析模式")
-        self._send_json(analysis.to_dict())
+        registry = CharacterRegistry.from_dict(
+            payload.get("character_registry"),
+            default_limit=MAX_PRIMARY_CHARACTERS,
+        )
+        registry.reconcile(analysis)
+        response = analysis.to_dict()
+        response["character_registry"] = registry.to_dict()
+        self._send_json(response)
+
+    def _handle_import_epub(self, raw: bytes, source_name: str) -> None:
+        if not source_name.casefold().endswith(".epub"):
+            raise ValueError("请选择 EPUB 文件")
+        project = parse_epub(raw, source_name)
+        self._send_json(project.to_dict(), HTTPStatus.CREATED)
 
     def _handle_render_plan(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
