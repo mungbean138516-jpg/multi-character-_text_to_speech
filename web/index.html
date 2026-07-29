@@ -244,6 +244,14 @@
             </div>
           </div>
           <div class="render-actions">
+            <button
+              id="localRenderButton"
+              class="secondary-button wide"
+              type="button"
+              hidden
+            >
+              <span>免费生成（Mac）</span><b>⌘</b>
+            </button>
             <button id="dashscopeRenderButton" class="primary-button wide" type="button">
               <span>开始生成</span><b>✦</b>
             </button>
@@ -315,10 +323,7 @@
               <button id="refreshPlanButton" class="text-button subtle" type="button">
                 重新计算
               </button>
-              <button id="demoRenderButton" class="secondary-button compact" type="button">
-                <span>运行离线链路检查</span>
-              </button>
-              <p>离线检查只会生成可区分的测试音，不是实际朗读成片。</p>
+              <p>Mac 本地模式与 CosyVoice 都会生成真实朗读；测试音已从用户界面移除。</p>
             </div>
           </details>
           <div id="audioResult" class="audio-result" hidden>
@@ -349,7 +354,7 @@
     </main>
 
     <footer>
-      <span>声场 VoxCast · Alpha 0.5</span>
+      <span>声场 VoxCast · Alpha 0.6</span>
       <span>AI 自动选角，你随时可以纠正。</span>
     </footer>
 

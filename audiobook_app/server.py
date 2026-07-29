@@ -18,7 +18,9 @@ from .models import AnalysisResult
 from .providers import (
     DashScopeTTSProvider,
     DemoToneProvider,
+    MacOSLocalTTSProvider,
     dashscope_tts_is_configured,
+    macos_local_tts_is_available,
 )
 from .qwen import QwenNovelAnalyzer, qwen_is_configured
 from .registry import CharacterRegistry
@@ -68,6 +70,13 @@ DASHSCOPE_PRICE_PER_10K_CNY = _optional_nonnegative_float(
 def _provider_for_name(name: str):
     if name == "demo":
         return DemoToneProvider()
+    if name == "local":
+        if not macos_local_tts_is_available():
+            raise ValueError(
+                "Mac 本地语音不可用；请安装中文系统声音，"
+                "或改用浏览器试听 / 百炼 CosyVoice"
+            )
+        return MacOSLocalTTSProvider()
     if name == "dashscope":
         if not dashscope_tts_is_configured():
             raise ValueError("尚未配置百炼 TTS 环境变量")
@@ -84,7 +93,7 @@ class AudiobookHTTPServer(ThreadingHTTPServer):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.5"
+    server_version = "MultiVoiceAudiobook/0.6"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -128,9 +137,10 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.5.0"})
+            self._send_json({"status": "ok", "version": "0.6.0"})
             return
         if path == "/api/config":
+            local_tts_ready = macos_local_tts_is_available()
             self._send_json(
                 {
                     "analyzers": {
@@ -150,11 +160,16 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     "providers": {
                         "browser": {
                             "ready": True,
-                            "label": "浏览器试听（免费，不导出）",
+                            "label": "设备自然试听（免费，不导出）",
                         },
-                        "demo": {
-                            "ready": True,
-                            "label": "离线音频流水线检测",
+                        "local": {
+                            "ready": local_tts_ready,
+                            "label": "Mac 本地中文语音（免费）",
+                            "detail": (
+                                "使用 Mac 已安装的中文系统声音，可播放和导出"
+                                if local_tts_ready
+                                else "仅在安装了中文系统声音的 Mac 上可用"
+                            ),
                         },
                         "dashscope": {
                             "ready": dashscope_tts_is_configured(),
@@ -310,7 +325,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_render_plan(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
-        provider_name = str(payload.get("provider", "demo"))
+        provider_name = str(payload.get("provider", "local"))
         provider = _provider_for_name(provider_name)
         plan = build_render_plan(
             analysis,
@@ -330,15 +345,20 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 if DASHSCOPE_PRICE_PER_10K_CNY is not None
                 else "未配置每万字符单价；已估算未缓存字符与请求数，实际费用以供应商账单为准。"
             )
+        elif provider_name == "local":
+            plan["note"] = (
+                "使用 Mac 已安装的中文系统声音，不消耗 API 额度；"
+                "重复片段会直接复用缓存。"
+            )
         else:
-            plan["note"] = "离线检测不消耗 API 额度；重复片段会直接复用缓存。"
+            plan["note"] = "内部音频管线检查不消耗 API 额度。"
         self._send_json(plan)
 
     def _handle_render(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
         if not analysis.segments:
             raise ValueError("没有可生成的脚本片段")
-        provider_name = str(payload.get("provider", "demo"))
+        provider_name = str(payload.get("provider", "local"))
         if provider_name == "dashscope" and payload.get("confirm_cost") is not True:
             raise ValueError("调用付费 TTS 前需要确认可能产生费用")
         provider = _provider_for_name(provider_name)
@@ -360,7 +380,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
         if not analysis.segments:
             raise ValueError("没有可生成的脚本片段")
-        provider_name = str(payload.get("provider", "demo"))
+        provider_name = str(payload.get("provider", "local"))
         if provider_name == "dashscope" and payload.get("confirm_cost") is not True:
             raise ValueError("调用付费 TTS 前需要确认可能产生费用")
         output_format = str(payload.get("format", "wav")).lower()
@@ -441,7 +461,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
         if selected_segment is None:
             raise ValueError("找不到要重新生成的句子")
 
-        provider_name = str(payload.get("provider", "demo"))
+        provider_name = str(payload.get("provider", "local"))
         if provider_name == "dashscope" and payload.get("confirm_cost") is not True:
             raise ValueError("调用付费 TTS 前需要确认可能产生费用")
         provider = _provider_for_name(provider_name)

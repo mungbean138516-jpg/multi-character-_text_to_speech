@@ -57,6 +57,14 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("重做这句", javascript)
         self.assertIn("高级设置", html)
 
+    def test_natural_local_speech_replaces_user_facing_test_tones(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="localRenderButton"', html)
+        self.assertNotIn('id="demoRenderButton"', html)
+        self.assertIn("selectNaturalBrowserVoice", javascript)
+        self.assertIn("NOVELTY_VOICE_HINTS", javascript)
+
     def test_book_project_controls_and_storage_contract_are_present(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")

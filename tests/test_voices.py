@@ -43,6 +43,14 @@ class VoiceCastingTests(unittest.TestCase):
             all(voice.provider_voice.endswith("_v3") for voice in VOICE_CATALOG)
         )
 
+    def test_browser_approximations_stay_in_natural_ranges(self) -> None:
+        self.assertTrue(
+            all(0.92 <= voice.browser_pitch <= 1.10 for voice in VOICE_CATALOG)
+        )
+        self.assertTrue(
+            all(0.88 <= voice.browser_rate <= 1.08 for voice in VOICE_CATALOG)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

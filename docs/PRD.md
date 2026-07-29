@@ -1,4 +1,4 @@
-# 声场 VoxCast · 0.5 Progressive Playback Alpha 产品需求
+# 声场 VoxCast · 0.6 Natural Voice Alpha 产品需求
 
 ## 1. 一句话定义
 
