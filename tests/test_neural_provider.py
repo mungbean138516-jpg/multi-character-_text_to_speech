@@ -66,6 +66,16 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             "zh-CN-XiaoyiNeural",
         )
 
+    def test_adult_man_uses_clear_young_voice_without_pitch_shift(self) -> None:
+        adult_man = VOICE_BY_ID["adult_m_calm"]
+
+        self.assertEqual(
+            select_neural_voice(adult_man),
+            "zh-CN-YunxiNeural",
+        )
+        self.assertEqual(neural_rate(adult_man), "+2%")
+        self.assertEqual(neural_pitch(adult_man), "+0Hz")
+
     def test_provider_converts_downloaded_mp3_to_valid_wav(self) -> None:
         calls: list[tuple[str, str, str, str]] = []
 

@@ -12,19 +12,20 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 4
+NEURAL_VOICE_MAP_VERSION = 5
 
 # The free experience intentionally uses five tested roles instead of exposing
 # every available Edge voice. The narrator and adult roles keep their native
-# timbre. Yunxia already reads naturally as a boy. The free Edge catalogue has
-# no equivalent standard-Mandarin girl voice, so the girl uses the livelier
-# Xiaoyi base with a controlled child-specific lift. Elder presets deliberately
-# fall back to a natural adult voice instead of simulating age through pitch
-# shifting.
+# timbre. Yunxi gives adult dialogue a younger, clearer delivery than the
+# professional-announcer-oriented Yunyang. Yunxia already reads naturally as a
+# boy. The free Edge catalogue has no equivalent standard-Mandarin girl voice,
+# so the girl uses the livelier Xiaoyi base with a controlled child-specific
+# lift. Elder presets deliberately fall back to a natural adult voice instead
+# of simulating age through pitch shifting.
 NEURAL_VOICE_BY_PRESET: dict[str, str] = {
     "narrator_f": "zh-CN-XiaoxiaoNeural",
     "adult_f_soft": "zh-CN-XiaoyiNeural",
-    "adult_m_calm": "zh-CN-YunyangNeural",
+    "adult_m_calm": "zh-CN-YunxiNeural",
     "child_f": "zh-CN-XiaoyiNeural",
     "child_m": "zh-CN-YunxiaNeural",
 }
@@ -37,7 +38,7 @@ _FALLBACK_BY_GENDER = {
 _RATE_BY_PRESET = {
     "narrator_f": "-2%",
     "adult_f_soft": "+0%",
-    "adult_m_calm": "-1%",
+    "adult_m_calm": "+2%",
     "child_f": "+6%",
     "child_m": "+4%",
 }
