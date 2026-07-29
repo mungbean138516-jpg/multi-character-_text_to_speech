@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml/badge.svg)](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml)
 
-当前版本是可实际试用的 `0.6 Natural Voice Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
+当前版本是可实际试用的 `0.7 Neural Voice Pack Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
 
 ```mermaid
 flowchart LR
@@ -33,6 +33,7 @@ flowchart LR
 - 可把重复角色人工合并；被改过的角色与台词显示“人工锁定”。
 - 项目自动保存在当前浏览器的 IndexedDB，可容纳多章项目、刷新恢复，也可随时删除本机保存副本；旧浏览器回退到 localStorage。
 - 无 API Key 时，使用浏览器 Web Speech API 做多人试听；优先选择标准中文人声、避开效果音声线，并把角色变调限制在自然范围内。
+- 安装可选 Neural 声线包后，可使用 9 种自动精选的普通话 / 国语神经声线生成、缓存、渐进播放和导出真实朗读；儿童和老人主要靠声线选角，只做极轻的语速与音高调整。
 - Mac 会自动发现已经安装的中文系统声音，免费生成真实朗读 WAV；它同样支持逐句缓存、边生成边播放和完整章节导出。
 - 每句话都提供“角色错了”“这个字读错了”“重做这句”三个低门槛纠错入口。
 - 全书发音词典会记住人名、多音字和专有名词的朗读写法，原文显示保持不变。
@@ -46,7 +47,7 @@ flowchart LR
 - 任务 ID 保存在浏览器本机草稿中，刷新页面后会自动接回进度和已完成片段。
 - 可导出 WAV；服务器安装 ffmpeg 后也可输出 MP3。
 - 可选用千问增强人物特质和复杂台词归属建议；失败时自动退回本地规则结果。
-- 零 Python 第三方运行依赖，现场机器只需要 Python 3.10+。
+- 基础模式零 Python 第三方运行依赖；高质量免费声线是可选安装，现场机器只需要 Python 3.10+。
 
 ## 30 秒启动
 
@@ -65,7 +66,7 @@ python3 -m audiobook_app
 5. 切到下一章继续识别，已经确认的角色和声音会自动沿用。
 6. 点击“从头试听”，或从任意一句开始听。
 7. 发现串台或错音时，用句子下方的纠错按钮修正。
-8. 在 Mac 上点击“免费生成（Mac）”，或在高品质语音已连接时点击“开始生成”；第一批句子完成后即可播放。
+8. 已安装 Neural 声线包时点击“免费高质量生成”；断网时可在 Mac 上改用“免费生成（Mac）”。第一批句子完成后即可播放。
 
 WAV / MP3 格式等选项放在“导出与开发检查”中，不干扰普通用户主流程。MP3 需要系统安装 `ffmpeg`；仓库里的 Dockerfile 已包含它。
 
@@ -76,6 +77,25 @@ WAV / MP3 格式等选项放在“导出与开发检查”中，不干扰普通�
 ```bash
 python3 -m audiobook_app analyze examples/demo_chapter.txt
 ```
+
+## 安装免费高质量中文声线
+
+基础版不需要任何 Python 第三方包。想明显改善声音时，在项目目录只需额外运行一次：
+
+```bash
+python3 -m pip install edge-tts miniaudio
+python3 -m audiobook_app
+```
+
+重启后页面会出现“免费高质量生成”。在线目录当前可见 14 种中文 Neural 声线，本版自动精选其中 9 种普通话 / 国语声线：
+
+- 女旁白与女性角色在 `Xiaoxiao`、`Xiaoyi`、`HsiaoChen`、`HsiaoYu` 之间稳定分配；
+- 男性角色在 `Yunxi`、`Yunjian`、`Yunxia`、`Yunyang`、`YunJhe` 之间稳定分配；
+- 男孩优先使用更年轻的云夏；
+- 粤语、东北与陕西口音共 5 种声线暂不自动分配，避免普通角色突然改变方言；
+- 所有角色只在 `-2Hz` 到 `+2Hz`、`-6%` 到 `+6%` 的自然范围内微调。
+
+该模式不需要 API Key，但需要联网，并依赖 Microsoft Edge 使用的在线语音服务，因此定位为课堂体验与原型验证功能，不应作为正式商业版本唯一的 TTS 来源。断网时会保留 Mac 本地声音作为兜底；正式产品仍应使用有服务协议和 SLA 的百炼、Azure Speech 等供应商。
 
 ## 连接阿里云百炼
 
@@ -139,6 +159,7 @@ audiobook_app/
   providers/
     base.py         TTS 统一接口
     macos.py        Mac 已安装中文系统声音的免费真实朗读适配器
+    neural.py       免 Key 在线 Neural 中文声线与自然角色映射
     demo.py         仅供自动测试使用的内部音频管线适配器
     dashscope.py    百炼非实时 TTS 适配器
 web/
@@ -164,7 +185,7 @@ docs/               PRD、架构、路线、演示与 Qoder 记录
 | `GET` | `/api/render/jobs/{job_id}` | 获取进度与已可播放片段 |
 | `POST` | `/api/render/jobs/{job_id}/pause` | 在当前句完成后暂停 |
 | `POST` | `/api/render/jobs/{job_id}/resume` | 继续暂停或部分失败的任务 |
-| `POST` | `/api/render` | 使用 Mac 本地中文语音或百炼生成 WAV / MP3 |
+| `POST` | `/api/render` | 使用 Neural、Mac 本地中文语音或百炼生成 WAV / MP3 |
 
 完整数据合同见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -175,7 +196,7 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q audiobook_app
 ```
 
-当前 55 个测试不访问公网、不消耗 API 额度，覆盖：
+当前 60 个测试不访问公网、不消耗 API 额度，覆盖：
 
 - 前置、后置和动作式说话人；
 - 嵌套、同型嵌套、未闭合和英文引号；
@@ -194,7 +215,7 @@ python3 -m compileall -q audiobook_app
 - EPUB 元数据、书脊顺序、超长章节拆分、非法路径与损坏文件拒绝；
 - 书籍项目往返、跨章别名匹配、人工锁定继承和主要角色溢出降级；
 - 24 个精选音色的数量、唯一性与模型版本约束；
-- 浏览器声线的自然变调范围、效果音规避与 Mac 本地中文语音转换；
+- 浏览器声线的自然变调范围、效果音规避、Neural 声线映射与 Mac 本地中文语音转换；
 - 调用前的字符限额。
 
 ## 稳定演示
@@ -213,6 +234,7 @@ PPT 按当前安排继续暂缓，等进入路演制作阶段再从真实 Demo �
 
 - 嵌套引号和明确说话人已有本地基线；复杂自由对白仍可能需要千问建议或用户纠错。
 - 浏览器试听依赖操作系统安装的中文声音，音质和声线数量因设备而异；系统没有合适的男声或女声时会优先保证自然度，而不是用极端变调硬凑年龄。
+- 免费 Neural 声线包需要联网，属于免 Key 的实验性适配器；上游服务变化时可能暂时不可用，不能替代正式商业 TTS 合同。
 - Mac 免费生成依赖系统自带的 `say`、`afconvert` 和至少一个已下载的中文声音；其他操作系统仍可使用浏览器试听或连接 CosyVoice。
 - 当前已有 EPUB、多章项目、跨章角色记忆、全书发音记忆、单句重做、后台章节任务、首批播放、暂停 / 继续、WAV / 可选 MP3、片段缓存和失败补齐。
 - 跨章角色一致性只依据明确姓名和用户保存的别名；不再增加额外的人物关系推断功能。

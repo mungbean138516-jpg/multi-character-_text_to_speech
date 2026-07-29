@@ -127,6 +127,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     "outputFormat",
     "renderPlan",
     "refreshPlanButton",
+    "neuralRenderButton",
     "localRenderButton",
     "dashscopeRenderButton",
     "renderJobPanel",
@@ -207,6 +208,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.refreshPlanButton.addEventListener("click", () =>
     refreshRenderPlan(state.lastProvider, true),
   );
+  elements.neuralRenderButton.addEventListener("click", () =>
+    renderAudio("neural"),
+  );
   elements.localRenderButton.addEventListener("click", () =>
     renderAudio("local"),
   );
@@ -252,11 +256,13 @@ async function loadConfig() {
         elements.outputFormat.value = "wav";
       }
     }
-    state.lastProvider = state.config.providers?.dashscope?.ready
-      ? "dashscope"
-      : state.config.providers?.local?.ready
-        ? "local"
-        : null;
+    state.lastProvider = state.config.providers?.neural?.ready
+      ? "neural"
+      : state.config.providers?.dashscope?.ready
+        ? "dashscope"
+        : state.config.providers?.local?.ready
+          ? "local"
+          : null;
     updateProviderNotice();
   } catch (error) {
     elements.systemStatus.lastChild.textContent = " 服务未连接";
@@ -265,22 +271,40 @@ async function loadConfig() {
 }
 
 function updateProviderNotice() {
+  const neuralReady = Boolean(state.config?.providers?.neural?.ready);
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
   const localReady = Boolean(state.config?.providers?.local?.ready);
-  elements.providerNotice.textContent = dashscopeReady
-    ? localReady
-      ? "高品质语音与 Mac 免费本地语音均已就绪，可任选一种生成。"
-      : "高品质语音服务已就绪，生成前会先显示预计内容和费用。"
-    : localReady
-      ? "已启用 Mac 免费本地中文语音：生成的是实际朗读，不再是测试音。"
-      : "现在可用设备声音自然试听；生成可下载音频需要 Mac 中文系统声音或 CosyVoice。";
+  elements.providerNotice.textContent = neuralReady
+    ? "免费 Neural 中文声线已就绪：声音更自然、无需 API Key，但生成时需要联网。"
+    : dashscopeReady
+      ? localReady
+        ? "CosyVoice 与 Mac 免费本地语音均已就绪，可任选一种生成。"
+        : "CosyVoice 已就绪，生成前会显示预计内容和费用。"
+      : localReady
+        ? "当前使用 Mac 免费本地声音；安装 Neural 声线包后可获得更自然的朗读。"
+        : "现在可用设备声音试听；安装 Neural 声线包后可免费生成下载音频。";
+  elements.neuralRenderButton.hidden = !neuralReady;
   elements.localRenderButton.hidden = !localReady;
   const label = elements.dashscopeRenderButton.querySelector("span");
   if (label) {
     label.textContent = dashscopeReady ? "开始生成" : "高品质语音待连接";
   }
-  elements.localRenderButton.classList.toggle("primary-button", !dashscopeReady);
-  elements.localRenderButton.classList.toggle("secondary-button", dashscopeReady);
+  elements.dashscopeRenderButton.classList.toggle(
+    "primary-button",
+    !neuralReady,
+  );
+  elements.dashscopeRenderButton.classList.toggle(
+    "secondary-button",
+    neuralReady,
+  );
+  elements.localRenderButton.classList.toggle(
+    "primary-button",
+    !neuralReady && !dashscopeReady,
+  );
+  elements.localRenderButton.classList.toggle(
+    "secondary-button",
+    neuralReady || dashscopeReady,
+  );
 }
 
 function loadDemo() {
@@ -1539,6 +1563,7 @@ function setActiveSegment(index) {
 }
 
 const NATURAL_FEMALE_VOICE_HINTS = [
+  "google",
   "huihui",
   "meijia",
   "sinji",
@@ -1586,6 +1611,14 @@ const NOVELTY_VOICE_HINTS = [
   "wobble",
   "zarvox",
 ];
+const HIGH_QUALITY_BROWSER_VOICE_HINTS = [
+  "enhanced",
+  "google",
+  "microsoft",
+  "natural",
+  "neural",
+  "premium",
+];
 
 function compactVoiceName(voice) {
   return `${voice?.name || ""}${voice?.voiceURI || ""}`
@@ -1609,6 +1642,7 @@ function browserVoiceGroup(voice) {
 
 function browserVoiceScore(voice, targetGender) {
   const language = String(voice.lang || "").replace("_", "-").toLowerCase();
+  const name = compactVoiceName(voice);
   let score = language === "zh-cn" ? 60 : language.startsWith("zh") ? 35 : 0;
   const group = browserVoiceGroup(voice);
   if (group === "novelty") {
@@ -1619,6 +1653,12 @@ function browserVoiceScore(voice, targetGender) {
     score -= 35;
   } else {
     score += 5;
+  }
+  if (
+    HIGH_QUALITY_BROWSER_VOICE_HINTS.some((hint) => name.includes(hint)) ||
+    voice.localService === false
+  ) {
+    score += 20;
   }
   if (voice.default) score += 3;
   return score;
@@ -1776,7 +1816,7 @@ function scheduleRenderPlan(provider = state.lastProvider) {
   window.clearTimeout(state.planTimer);
   if (!provider) {
     elements.renderPlan.textContent =
-      "设备自然试听已经可用；安装 Mac 中文系统声音或连接 CosyVoice 后可生成下载文件。";
+      "设备试听已经可用；安装 Neural 声线包、Mac 中文声音或连接 CosyVoice 后可生成下载文件。";
     return;
   }
   state.planTimer = window.setTimeout(
@@ -1811,6 +1851,7 @@ async function refreshRenderPlan(provider = state.lastProvider, showErrors = fal
 
 function applyRenderPlan(plan) {
   const isPaid = plan.provider === "dashscope";
+  const isNeural = plan.provider === "neural";
   const isLocal = plan.provider === "local";
   const ready = Number(plan.cached_segments) || 0;
   const remaining = Number(plan.estimated_requests) || 0;
@@ -1822,13 +1863,17 @@ function applyRenderPlan(plan) {
     plan.estimated_cost_cny === undefined
       ? ""
       : `<span><strong>约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}</strong> 预计费用</span>`;
-  const note = isLocal
+  const note = isNeural
     ? remaining
-      ? `将使用 Mac 的真实中文系统声音；已有 ${ready} 句可直接复用。`
-      : "所有句子都已经生成过，可直接复用并导出。"
-    : remaining
-      ? `已有 ${ready} 句准备好；实际费用以最终账单为准。`
-      : "所有句子都已准备好，再次生成不会重复制作声音。";
+      ? `将使用更自然的免费 Neural 中文声线；已有 ${ready} 句可直接复用。`
+      : "所有 Neural 句子都已经生成过，可直接复用并导出。"
+    : isLocal
+      ? remaining
+        ? `将使用 Mac 的真实中文系统声音；已有 ${ready} 句可直接复用。`
+        : "所有句子都已经生成过，可直接复用并导出。"
+      : remaining
+        ? `已有 ${ready} 句准备好；实际费用以最终账单为准。`
+        : "所有句子都已准备好，再次生成不会重复制作声音。";
   elements.renderPlan.innerHTML = `
     <span><strong>${Number(plan.segments).toLocaleString()}</strong> 句朗读内容</span>
     <span><strong>${remainingCharacters.toLocaleString()}</strong> 字待生成</span>
@@ -1850,15 +1895,22 @@ async function renderSingleSegment(index) {
     showMessage("请先重新识别角色，再修改这句话。");
     return;
   }
-  const provider = state.config?.providers?.dashscope?.ready
-    ? "dashscope"
-    : state.config?.providers?.local?.ready
-      ? "local"
-      : null;
+  const preferredProvider = state.lastProvider;
+  const provider =
+    preferredProvider &&
+    state.config?.providers?.[preferredProvider]?.ready
+      ? preferredProvider
+      : state.config?.providers?.neural?.ready
+        ? "neural"
+        : state.config?.providers?.dashscope?.ready
+          ? "dashscope"
+          : state.config?.providers?.local?.ready
+            ? "local"
+            : null;
   if (!provider) {
     startBrowserPreview(index, index + 1);
     showMessage(
-      "已先用设备的自然中文声音试听这句；安装 Mac 中文系统声音或连接 CosyVoice 后，同一按钮会只重新生成这一句。",
+      "已先用设备声音试听这句；安装 Neural 声线包、Mac 中文声音或连接 CosyVoice 后，同一按钮会只重新生成这一句。",
       true,
     );
     return;
@@ -1920,9 +1972,11 @@ async function renderSingleSegment(index) {
     elements.audioMeta.textContent =
       result.cache_hits > 0
         ? "直接使用了已准备好的版本"
-        : provider === "local"
-          ? "使用 Mac 本地中文语音生成；下次生成全书时会直接复用"
-          : "只生成了这一句；下次生成全书时会直接复用";
+        : provider === "neural"
+          ? "使用免费 Neural 中文声线生成；下次生成全书时会直接复用"
+          : provider === "local"
+            ? "使用 Mac 本地中文语音生成；下次生成全书时会直接复用"
+            : "只生成了这一句；下次生成全书时会直接复用";
     elements.resultAudio.play().catch(() => {});
     elements.audioResult.scrollIntoView({ behavior: "smooth", block: "center" });
     showMessage("这句话已重新生成，其他句子没有重复处理。", true);
@@ -1957,15 +2011,19 @@ async function renderAudio(provider) {
   updateActionAvailability();
   hideMessage();
   const activeButton =
-    provider === "dashscope"
-      ? elements.dashscopeRenderButton
-      : elements.localRenderButton;
+    provider === "neural"
+      ? elements.neuralRenderButton
+      : provider === "dashscope"
+        ? elements.dashscopeRenderButton
+        : elements.localRenderButton;
   setBusy(
     activeButton,
     true,
-    provider === "dashscope"
-      ? "正在加入后台任务…"
-      : "正在调用 Mac 中文语音…",
+    provider === "neural"
+      ? "正在调用 Neural 中文声线…"
+      : provider === "dashscope"
+        ? "正在加入后台任务…"
+        : "正在调用 Mac 中文语音…",
   );
 
   try {
@@ -2015,7 +2073,11 @@ async function renderAudio(provider) {
     setBusy(
       activeButton,
       false,
-      provider === "dashscope" ? "开始生成" : "免费生成（Mac）",
+      provider === "neural"
+        ? "免费高质量生成"
+        : provider === "dashscope"
+          ? "开始生成"
+          : "免费生成（Mac）",
     );
     updateActionAvailability();
   }
@@ -2058,6 +2120,7 @@ function applyRenderJob(job) {
     : [];
   state.renderJob = job;
   if (
+    (job.provider === "neural" && state.config?.providers?.neural?.ready) ||
     (job.provider === "local" && state.config?.providers?.local?.ready) ||
     (job.provider === "dashscope" && state.config?.providers?.dashscope?.ready)
   ) {
@@ -2107,11 +2170,13 @@ function applyRenderJob(job) {
     elements.downloadLink.textContent =
       `下载 ${String(job.format || "wav").toUpperCase()} ↓`;
     elements.audioTitle.textContent =
-      job.provider === "local"
-        ? "Mac 本地多人朗读已生成"
-        : job.provider === "demo"
-          ? "内部音频检查已完成"
-          : "多人有声书已生成";
+      job.provider === "neural"
+        ? "Neural 多人朗读已生成"
+        : job.provider === "local"
+          ? "Mac 本地多人朗读已生成"
+          : job.provider === "demo"
+            ? "内部音频检查已完成"
+            : "多人有声书已生成";
     elements.audioMeta.textContent =
       `${completed} 句 · 后台生成完成，可播放或下载完整章节`;
     elements.wavDownloadLink.hidden =
@@ -2298,6 +2363,10 @@ function updateActionAvailability() {
   elements.playButton.disabled = unavailable || state.isSpeaking;
   elements.stopButton.disabled = !state.isSpeaking;
   elements.previewSpeed.disabled = state.isRendering;
+  elements.neuralRenderButton.disabled =
+    unavailable ||
+    activeRenderJob ||
+    !state.config?.providers?.neural?.ready;
   elements.localRenderButton.disabled =
     unavailable ||
     activeRenderJob ||
