@@ -102,7 +102,7 @@ class AudiobookHTTPServer(ThreadingHTTPServer):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.7"
+    server_version = "MultiVoiceAudiobook/0.8"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -146,7 +146,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.7.0"})
+            self._send_json({"status": "ok", "version": "0.8.0"})
             return
         if path == "/api/config":
             local_tts_ready = macos_local_tts_is_available()

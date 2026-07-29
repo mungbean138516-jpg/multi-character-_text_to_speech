@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
+from audiobook_app import __version__
 import audiobook_app.server as app_server
 from tests.test_epub import make_epub
 
@@ -76,6 +77,10 @@ class ServerIntegrationTests(unittest.TestCase):
     def get_json(cls, path: str) -> dict:
         with urllib.request.urlopen(cls.base_url + path) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def test_health_reports_package_version(self) -> None:
+        health = self.get_json("/api/health")
+        self.assertEqual(health, {"status": "ok", "version": __version__})
 
     def test_analyze_render_download_and_cached_plan(self) -> None:
         analysis = self.post(

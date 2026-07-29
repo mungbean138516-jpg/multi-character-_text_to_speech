@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml/badge.svg)](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml)
 
-当前版本是可实际试用的 `0.7 Neural Voice Pack Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
+当前版本是可实际试用的 `0.8 Mac Quick Start Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
 
 ```mermaid
 flowchart LR
@@ -49,11 +49,27 @@ flowchart LR
 - 可选用千问增强人物特质和复杂台词归属建议；失败时自动退回本地规则结果。
 - 基础模式零 Python 第三方运行依赖；高质量免费声线是可选安装，现场机器只需要 Python 3.10+。
 
-## 30 秒启动
+## Mac 最简单：下载后双击
+
+不会 GitHub 或 Python 也可以体验：
+
+1. 在 GitHub 页面点击绿色 **Code** → **Download ZIP**；
+2. 解压 ZIP；
+3. 双击根目录里的 **`Start-VoxCast.command`**；
+4. 第一次运行会在项目内创建独立环境并安装免费 Neural 中文声线，完成后自动打开浏览器；
+5. 以后只需再次双击同一个文件。
+
+启动器不会使用 `sudo`，也不会改动系统 Python。所有依赖都放在项目内的
+`.voxcast-venv` 中。第一次需要联网；若 Neural 安装暂时失败，基础版仍会
+启动，下次联网后双击会自动重试。macOS 第一次拦截时，请右键文件并选择
+“打开”。
+
+## 终端启动
 
 ```bash
 git clone https://github.com/mungbean138516-jpg/multi-character-_text_to_speech.git
 cd multi-character-_text_to_speech
+python3 -m pip install edge-tts miniaudio
 python3 -m audiobook_app
 ```
 

@@ -3,8 +3,8 @@
 ## 演示前
 
 - 使用 Chrome 或 Safari。
-- 提前运行 `python3 -m pip install edge-tts miniaudio`，确认页面显示“免费高质量生成”。
-- 启动 `python3 -m audiobook_app`。
+- Mac 现场机优先双击 `Start-VoxCast.command`，确认页面显示“免费高质量生成”。
+- 终端备用：运行 `python3 -m pip install edge-tts miniaudio`，再运行 `python3 -m audiobook_app`。
 - 新开无痕窗口走一遍完整路径。
 - 若演示真实百炼，提前确认余额、Key、Workspace ID 和网络。
 - 准备离线模式作为备用；不要把缓存结果说成实时生成。

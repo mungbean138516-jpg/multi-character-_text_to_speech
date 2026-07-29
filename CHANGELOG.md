@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0 Mac Quick Start Alpha
+
+### 用户可见
+
+- Mac 用户下载 ZIP 后可直接双击 `Start-VoxCast.command`。
+- 第一次运行自动选择 Python 3.10+、创建项目内独立环境并安装免费 Neural 中文声线。
+- 安装成功后自动启动本地服务并打开浏览器；重复双击会直接打开已经运行的声场。
+- 断网导致 Neural 安装失败时仍可启动基础版，下次联网后自动重试。
+
+### 工程
+
+- 启动器不使用 `sudo`，不修改系统 Python，依赖隔离在 `.voxcast-venv`。
+- 增加端口、Python 版本、虚拟环境和安装失败的中文错误提示。
+- 增加 Bash 语法、可执行权限、无副作用 dry-run、版本一致性和安全边界测试；测试增至 64 个。
+- 版本升级至 0.8.0。
+
 ## 0.7.0 Neural Voice Pack Alpha
 
 ### 用户可见
