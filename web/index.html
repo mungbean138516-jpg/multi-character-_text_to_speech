@@ -210,7 +210,7 @@
               <span class="section-number">03</span>
               <div>
                 <h2>检查朗读脚本</h2>
-                <p>发现串台或错音时，直接在对应句子上纠正。</p>
+                <p>试听与最终生成使用同一套声音；发现串台或错音时，直接在对应句子上纠正。</p>
               </div>
             </div>
             <div class="preview-actions">
@@ -224,7 +224,7 @@
                 </select>
               </label>
               <button id="playButton" class="secondary-button" type="button">
-                ▶ 快速试听（设备）
+                ▶ Neural 连续试听
               </button>
               <button id="stopButton" class="icon-button" type="button" title="停止试听">
                 ■
@@ -234,7 +234,7 @@
           <div id="nowPlaying" class="now-playing" aria-live="polite">
             <span class="now-playing-dot"></span>
             <b>尚未开始播放</b>
-            <small>点击任意一句的“从这里听”也可以开始</small>
+            <small>点击任意一句的“从这里听 Neural”也可以开始</small>
           </div>
           <div id="scriptTimeline" class="script-timeline"></div>
         </section>
@@ -245,7 +245,7 @@
             <div>
               <h2>生成多人有声书</h2>
               <p>
-                确认角色和声音后开始生成。以后只改一句，也只需重新生成那一句。
+                使用上面试听过的同一套免费 Neural 声音生成。以后只改一句，也只需重新生成那一句。
               </p>
               <div id="providerNotice" class="provider-notice"></div>
             </div>
@@ -257,7 +257,7 @@
               type="button"
               hidden
             >
-              <span>免费高质量生成</span><b>✦</b>
+              <span>用这 5 类声音生成</span><b>✦</b>
             </button>
             <button
               id="localRenderButton"
@@ -265,7 +265,7 @@
               type="button"
               hidden
             >
-              <span>免费生成（Mac）</span><b>⌘</b>
+              <span>备用：Mac 本地声音</span><b>⌘</b>
             </button>
             <button id="dashscopeRenderButton" class="primary-button wide" type="button">
               <span>🔒 高级声线（未开通）</span><b>✦</b>
@@ -338,7 +338,7 @@
               <button id="refreshPlanButton" class="text-button subtle" type="button">
                 重新计算
               </button>
-              <p>免费 Neural 提供 5 类精选角色声线；更多定制音色由高级 CosyVoice 服务提供。两种模式都会生成真实朗读。</p>
+              <p>主按钮与上方试听共用同一套 5 类免费 Neural 声线和缓存；Mac 本地声音仅作为断网备用。</p>
             </div>
           </details>
           <div id="audioResult" class="audio-result" hidden>
