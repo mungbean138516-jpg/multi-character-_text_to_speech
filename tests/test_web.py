@@ -89,6 +89,13 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("render_job_ids", javascript)
         self.assertIn("restoreRenderJobForCurrentContext", javascript)
 
+    def test_voice_similarity_offers_actionable_replacement(self) -> None:
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("renderVoiceReplacementChoices", javascript)
+        self.assertIn("replacement-preview", javascript)
+        self.assertIn("replacement-apply", javascript)
+        self.assertIn("applyReplacementVoice", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

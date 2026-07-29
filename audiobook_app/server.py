@@ -13,6 +13,8 @@ from urllib.parse import unquote, urlparse
 from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
 from .epub import parse_epub
+from .document_import import parse_document
+from .directing import consistency_check, direct_text
 from .jobs import RenderJobManager, RenderJobNotFoundError
 from .models import AnalysisResult
 from .providers import (
@@ -37,6 +39,7 @@ CACHE_ROOT = Path(
 ).resolve()
 MAX_REQUEST_BYTES = int(os.getenv("APP_MAX_REQUEST_BYTES", "2000000"))
 MAX_EPUB_BYTES = int(os.getenv("APP_MAX_EPUB_BYTES", "20000000"))
+MAX_DOCUMENT_BYTES = int(os.getenv("APP_MAX_DOCUMENT_BYTES", "20000000"))
 MAX_ANALYZE_CHARACTERS = int(os.getenv("APP_MAX_ANALYZE_CHARACTERS", "50000"))
 MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
 MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
@@ -187,6 +190,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     "limits": {
                         "analyze_characters": MAX_ANALYZE_CHARACTERS,
                         "epub_bytes": MAX_EPUB_BYTES,
+                        "document_bytes": MAX_DOCUMENT_BYTES,
                         "primary_characters": MAX_PRIMARY_CHARACTERS,
                         "render_characters": MAX_RENDER_CHARACTERS,
                         "render_segments": MAX_RENDER_SEGMENTS,
@@ -194,6 +198,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     "imports": {
                         "txt": True,
                         "epub": True,
+                        "pdf": True,
+                        "docx": True,
                         "voxcast_project": True,
                     },
                     "features": {
@@ -205,6 +211,10 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "progressive_playback": True,
                         "render_pause_resume": True,
                         "refresh_job_recovery": True,
+                        "consistency_check": True,
+                        "rule_director": True,
+                        "emotion_curve": True,
+                        "voice_similarity": True,
                     },
                 }
             )
@@ -245,6 +255,14 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._handle_import_epub(raw, source_name)
                 return
+            if path == "/api/import/document":
+                raw = self._read_body(MAX_DOCUMENT_BYTES)
+                source_name = unquote(
+                    self.headers.get("X-VoxCast-Filename", "document.docx")
+                )
+                project = parse_document(raw, source_name)
+                self._send_json(project.to_dict(), HTTPStatus.CREATED)
+                return
 
             payload = self._read_json()
             if path == "/api/analyze":
@@ -259,6 +277,28 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 self._handle_render_job_action(path, payload)
             elif path == "/api/render":
                 self._handle_render(payload)
+            elif path == "/api/consistency-check":
+                chapters = payload.get("chapters", [])
+                if not isinstance(chapters, list):
+                    raise ValueError("章节格式错误")
+                self._send_json(consistency_check(chapters))
+            elif path == "/api/direct":
+                segments = payload.get("segments", [])
+                if not isinstance(segments, list):
+                    raise ValueError("片段格式错误")
+                self._send_json({
+                    "directions": [
+                        {
+                            "segment_id": str(segment.get("id", index)),
+                            **direct_text(
+                                str(segment.get("text", "")),
+                                str(segment.get("kind", "dialogue")),
+                            ),
+                        }
+                        for index, segment in enumerate(segments)
+                        if isinstance(segment, dict)
+                    ]
+                })
             else:
                 self._send_json(
                     {"error": "not_found", "message": "接口不存在"},
