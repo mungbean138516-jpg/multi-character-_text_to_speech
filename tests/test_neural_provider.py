@@ -62,6 +62,10 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             "zh-CN-XiaoyiNeural",
         )
         self.assertEqual(
+            neural_rate(VOICE_BY_ID["adult_f_soft"]),
+            "-2%",
+        )
+        self.assertEqual(
             select_neural_voice(VOICE_BY_ID["child_f"]),
             "zh-CN-XiaoyiNeural",
         )
@@ -73,7 +77,7 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             select_neural_voice(adult_man),
             "zh-CN-YunxiNeural",
         )
-        self.assertEqual(neural_rate(adult_man), "+2%")
+        self.assertEqual(neural_rate(adult_man), "-1%")
         self.assertEqual(neural_pitch(adult_man), "+0Hz")
 
     def test_provider_converts_downloaded_mp3_to_valid_wav(self) -> None:

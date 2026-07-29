@@ -12,7 +12,7 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 5
+NEURAL_VOICE_MAP_VERSION = 6
 
 # The free experience intentionally uses five tested roles instead of exposing
 # every available Edge voice. The narrator and adult roles keep their native
@@ -37,8 +37,8 @@ _FALLBACK_BY_GENDER = {
 
 _RATE_BY_PRESET = {
     "narrator_f": "-2%",
-    "adult_f_soft": "+0%",
-    "adult_m_calm": "+2%",
+    "adult_f_soft": "-2%",
+    "adult_m_calm": "-1%",
     "child_f": "+6%",
     "child_m": "+4%",
 }
