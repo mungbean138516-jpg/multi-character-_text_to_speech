@@ -24,6 +24,40 @@
 宁可复用自然中文人声，也不通过夸张升降调制造失真。这个 provider
 不需要 API Key，但只适用于安装了中文系统声音的 Mac。
 
+## 免费 Neural 中文声线包
+
+`NeuralVoicePackProvider` 是课堂体验用的可选适配器。安装：
+
+```bash
+python3 -m pip install edge-tts miniaudio
+```
+
+`edge-tts` 从 Microsoft Edge 使用的在线语音服务取得 MP3，`miniaudio`
+在本机把它解码、重采样为统一的 24kHz、16-bit、单声道 WAV。之后仍
+进入同一内容缓存、逐句重做、后台任务和章节拼接链路。
+
+在线目录当前实际提供 14 种中文 Neural 声线。本版自动精选 6 种大陆
+普通话和 3 种台湾国语声线，并由应用内部 `voice_id` 确定性映射：
+
+- `Xiaoxiao` / `Xiaoyi` / `HsiaoChen` / `HsiaoYu`：女旁白、成年女性、少女；
+- `Yunxi` / `Yunjian`：青年与成年男性；
+- `Yunxia`：更年轻的男声；
+- `Yunyang`：成熟男旁白；
+- `YunJhe`：温和、成熟与老年男性。
+
+粤语、东北和陕西口音的 5 种声线不会自动分配，避免普通角色突然改变
+方言；后续可在用户明确选择地域口音时开放。
+
+儿童和老人只做 `-2Hz` 到 `+2Hz`、`-6%` 到 `+6%` 的轻微调整。这个
+provider 不需要 API Key，但需要联网，上游也没有为本项目提供 SLA；
+因此它只适合原型和课堂体验。正式商业版本应换成官方 Azure Speech、
+百炼 CosyVoice 等有明确服务条款、计费和稳定性承诺的接口。
+
+参考：
+
+- [edge-tts 项目](https://github.com/rany2/edge-tts)
+- [Microsoft 中文语音与角色支持](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support)
+
 ## 千问
 
 本项目使用百炼 OpenAI 兼容 Chat Completions：
@@ -70,8 +104,8 @@ Content-Type: application/json
     "voice": "longjielidou_v3",
     "format": "wav",
     "sample_rate": 24000,
-    "rate": 1.08,
-    "pitch": 1.3,
+    "rate": 1.04,
+    "pitch": 1.09,
     "language_hints": ["zh"],
     "enable_aigc_tag": true
   }

@@ -21,8 +21,10 @@ from .providers import (
     DashScopeTTSProvider,
     DemoToneProvider,
     MacOSLocalTTSProvider,
+    NeuralVoicePackProvider,
     dashscope_tts_is_configured,
     macos_local_tts_is_available,
+    neural_voice_pack_is_available,
 )
 from .qwen import QwenNovelAnalyzer, qwen_is_configured
 from .registry import CharacterRegistry
@@ -80,6 +82,13 @@ def _provider_for_name(name: str):
                 "或改用浏览器试听 / 百炼 CosyVoice"
             )
         return MacOSLocalTTSProvider()
+    if name == "neural":
+        if not neural_voice_pack_is_available():
+            raise ValueError(
+                "免费 Neural 声线包尚未安装；请先运行 "
+                "python3 -m pip install edge-tts miniaudio"
+            )
+        return NeuralVoicePackProvider()
     if name == "dashscope":
         if not dashscope_tts_is_configured():
             raise ValueError("尚未配置百炼 TTS 环境变量")
@@ -96,7 +105,7 @@ class AudiobookHTTPServer(ThreadingHTTPServer):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.6"
+    server_version = "MultiVoiceAudiobook/0.7"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -140,10 +149,11 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.6.0"})
+            self._send_json({"status": "ok", "version": "0.7.0"})
             return
         if path == "/api/config":
             local_tts_ready = macos_local_tts_is_available()
+            neural_tts_ready = neural_voice_pack_is_available()
             self._send_json(
                 {
                     "analyzers": {
@@ -164,6 +174,19 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "browser": {
                             "ready": True,
                             "label": "设备自然试听（免费，不导出）",
+                        },
+                        "neural": {
+                            "ready": neural_tts_ready,
+                            "label": "免费 Neural 中文声线（联网）",
+                            "detail": (
+                                "九种精选普通话 / 国语神经声线，可播放和导出"
+                                if neural_tts_ready
+                                else "安装 edge-tts 与 miniaudio 后启用"
+                            ),
+                            "experimental": True,
+                            "install_command": (
+                                "python3 -m pip install edge-tts miniaudio"
+                            ),
                         },
                         "local": {
                             "ready": local_tts_ready,
@@ -384,6 +407,11 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 "只估算未命中缓存的字符与请求；实际费用以供应商账单为准。"
                 if DASHSCOPE_PRICE_PER_10K_CNY is not None
                 else "未配置每万字符单价；已估算未缓存字符与请求数，实际费用以供应商账单为准。"
+            )
+        elif provider_name == "neural":
+            plan["note"] = (
+                "使用免 Key 的在线 Neural 中文声线；不会产生 API 费用，"
+                "但需要联网，服务可用性不作保证。"
             )
         elif provider_name == "local":
             plan["note"] = (

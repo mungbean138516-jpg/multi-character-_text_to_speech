@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.0 Neural Voice Pack Alpha
+
+### 用户可见
+
+- 新增“免费高质量生成”，安装可选声线包后无需 API Key 即可生成中文 Neural 朗读。
+- 从当前 14 种在线中文声线中自动精选 9 种普通话 / 国语神经声线，方言声线不自动分配。
+- 儿童与老人主要通过声线选角区分，只保留极轻的语速和音高调整。
+- 保留 Mac 本地声音作为断网兜底，并明确免费 Neural 模式需要联网。
+
+### 工程
+
+- 新增可拔插的 `NeuralVoicePackProvider`。
+- `edge-tts` 下载 MP3，`miniaudio` 解码为统一的 24kHz、16-bit、单声道 WAV。
+- Neural 模式复用内容缓存、单句重做、后台任务、渐进播放和章节导出。
+- 可选依赖放在 `pyproject.toml` 的 `neural` extra，基础模式仍保持零第三方依赖。
+- 新增声线映射、自然变调、MP3 → WAV 和配置合同测试；测试增至 60 个。
+
+## 0.6.0 Natural Voice Alpha
+
+### 用户可见
+
+- 浏览器试听优先选择标准中文人声，避开 Whisper、Zarvox 等效果音。
+- 儿童、老人和成年角色的变调收窄到自然范围。
+- Mac 可使用已经安装的中文系统声音免费生成、播放和导出真实 WAV。
+- 用户界面不再提供诊断音乐测试音。
+- 原创演示文本改为女性优先的林夏、老奶奶和小女孩。
+
+### 工程
+
+- 新增 `MacOSLocalTTSProvider`，使用 `say` 与 `afconvert`。
+- 系统声音、语速和缓存身份采用确定性映射。
+- 新增 Mac 声线解析、效果音规避和 WAV 转换测试；测试增至 55 个。
+
 ## 0.5.0 Progressive Playback Alpha
 
 ### 用户可见

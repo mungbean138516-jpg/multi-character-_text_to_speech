@@ -60,10 +60,13 @@ class WebContractTests(unittest.TestCase):
     def test_natural_local_speech_replaces_user_facing_test_tones(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="neuralRenderButton"', html)
         self.assertIn('id="localRenderButton"', html)
         self.assertNotIn('id="demoRenderButton"', html)
         self.assertIn("selectNaturalBrowserVoice", javascript)
         self.assertIn("NOVELTY_VOICE_HINTS", javascript)
+        self.assertIn("HIGH_QUALITY_BROWSER_VOICE_HINTS", javascript)
+        self.assertIn('renderAudio("neural")', javascript)
 
     def test_book_project_controls_and_storage_contract_are_present(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")

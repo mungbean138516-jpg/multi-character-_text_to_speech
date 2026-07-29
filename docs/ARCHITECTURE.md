@@ -15,6 +15,7 @@
 11. **章节是工作单元，书籍是记忆边界。** 单次分析只处理当前章，角色与发音规则保存在 `BookProject`。
 12. **人工判断跨章优先。** `locked` 角色的姓名、类型与声音不会被后续章节的模型猜测覆盖。
 13. **长篇输入先做安全解析。** EPUB 在进入分析器前限制压缩包路径、文件数、解压大小和异常压缩比。
+14. **免费体验与正式供应商分层。** 免 Key Neural 适配器用于原型验证，Mac 系统声音负责断网兜底；商业版本使用有明确 SLA 的 TTS。
 
 ## 请求链路
 
@@ -108,6 +109,9 @@ synthesize(
 
 - `MacOSLocalTTSProvider`：使用 Mac 已安装的中文系统声音，输出统一
   24kHz 单声道 WAV；免费、可缓存、可拼接和导出。
+- `NeuralVoicePackProvider`：通过免 Key 在线中文 Neural 声线生成 MP3，
+  再用 `miniaudio` 解码为 24kHz 单声道 WAV；声音更自然，但需要联网，
+  只定位为实验性体验 provider。
 - `DemoToneProvider`：只供自动测试验证音频管线，不进入用户界面或默认
   API 路径。
 - `DashScopeTTSProvider`：百炼非实时 HTTP，一句一请求，立即下载 WAV。

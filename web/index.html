@@ -284,6 +284,14 @@
           </div>
           <div class="render-actions">
             <button
+              id="neuralRenderButton"
+              class="primary-button wide"
+              type="button"
+              hidden
+            >
+              <span>免费高质量生成</span><b>✦</b>
+            </button>
+            <button
               id="localRenderButton"
               class="secondary-button wide"
               type="button"
@@ -362,7 +370,7 @@
               <button id="refreshPlanButton" class="text-button subtle" type="button">
                 重新计算
               </button>
-              <p>Mac 本地模式与 CosyVoice 都会生成真实朗读；测试音已从用户界面移除。</p>
+              <p>Neural、Mac 本地模式与 CosyVoice 都会生成真实朗读；免费 Neural 模式需要联网。</p>
             </div>
           </details>
           <div id="audioResult" class="audio-result" hidden>

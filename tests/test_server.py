@@ -245,6 +245,21 @@ class ServerIntegrationTests(unittest.TestCase):
             1,
         )
 
+    def test_config_exposes_optional_neural_voice_pack(self) -> None:
+        with patch.object(
+            app_server,
+            "neural_voice_pack_is_available",
+            return_value=True,
+        ):
+            config = self.get_json("/api/config")
+
+        self.assertTrue(config["providers"]["neural"]["ready"])
+        self.assertTrue(config["providers"]["neural"]["experimental"])
+        self.assertIn(
+            "edge-tts",
+            config["providers"]["neural"]["install_command"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
