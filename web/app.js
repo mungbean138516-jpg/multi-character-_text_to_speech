@@ -23,9 +23,9 @@ const DEMO_TEXT = `雨敲在旧车站的玻璃顶上。林夏抱紧书包，望�
 
 “可外面在下暴雨！”陈默喊道。
 
-长椅旁的老爷爷抬起头，缓慢地说道：“年轻人，怕的从来不是雨，是不知道为什么出发。”
+长椅旁的老奶奶抬起头，平静地说道：“年轻人，怕的从来不是雨，是不知道为什么出发。”
 
-一个小男孩从售票窗后探出脑袋，兴奋地叫道：“火车来啦！”
+一个小女孩从售票窗后探出脑袋，兴奋地叫道：“火车来啦！”
 
 远处传来汽笛声。林夏转过身，眼睛亮了起来。
 
@@ -62,7 +62,7 @@ const state = {
   analysisStale: false,
   isSpeaking: false,
   isRendering: false,
-  lastProvider: "demo",
+  lastProvider: null,
   speechSession: 0,
   activeSegmentIndex: null,
   pronunciationSegmentIndex: null,
@@ -127,7 +127,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     "outputFormat",
     "renderPlan",
     "refreshPlanButton",
-    "demoRenderButton",
+    "localRenderButton",
     "dashscopeRenderButton",
     "renderJobPanel",
     "renderJobStatus",
@@ -207,7 +207,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.refreshPlanButton.addEventListener("click", () =>
     refreshRenderPlan(state.lastProvider, true),
   );
-  elements.demoRenderButton.addEventListener("click", () => renderAudio("demo"));
+  elements.localRenderButton.addEventListener("click", () =>
+    renderAudio("local"),
+  );
   elements.dashscopeRenderButton.addEventListener("click", () =>
     renderAudio("dashscope"),
   );
@@ -252,7 +254,9 @@ async function loadConfig() {
     }
     state.lastProvider = state.config.providers?.dashscope?.ready
       ? "dashscope"
-      : "demo";
+      : state.config.providers?.local?.ready
+        ? "local"
+        : null;
     updateProviderNotice();
   } catch (error) {
     elements.systemStatus.lastChild.textContent = " 服务未连接";
@@ -262,13 +266,21 @@ async function loadConfig() {
 
 function updateProviderNotice() {
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
+  const localReady = Boolean(state.config?.providers?.local?.ready);
   elements.providerNotice.textContent = dashscopeReady
-    ? "高品质语音服务已就绪，生成前会先显示预计内容和费用。"
-    : "高品质语音服务尚未连接；现在仍可免费完成多人试听和全部纠错。";
+    ? localReady
+      ? "高品质语音与 Mac 免费本地语音均已就绪，可任选一种生成。"
+      : "高品质语音服务已就绪，生成前会先显示预计内容和费用。"
+    : localReady
+      ? "已启用 Mac 免费本地中文语音：生成的是实际朗读，不再是测试音。"
+      : "现在可用设备声音自然试听；生成可下载音频需要 Mac 中文系统声音或 CosyVoice。";
+  elements.localRenderButton.hidden = !localReady;
   const label = elements.dashscopeRenderButton.querySelector("span");
   if (label) {
     label.textContent = dashscopeReady ? "开始生成" : "高品质语音待连接";
   }
+  elements.localRenderButton.classList.toggle("primary-button", !dashscopeReady);
+  elements.localRenderButton.classList.toggle("secondary-button", dashscopeReady);
 }
 
 function loadDemo() {
@@ -1526,6 +1538,127 @@ function setActiveSegment(index) {
   `;
 }
 
+const NATURAL_FEMALE_VOICE_HINTS = [
+  "huihui",
+  "meijia",
+  "sinji",
+  "tingting",
+  "xiaohan",
+  "xiaomeng",
+  "xiaomo",
+  "xiaorui",
+  "xiaoshuang",
+  "xiaoxiao",
+  "xiaoyi",
+  "xiaoyan",
+  "yaoyao",
+];
+const NATURAL_MALE_VOICE_HINTS = [
+  "kangkang",
+  "limu",
+  "yunjian",
+  "yunjie",
+  "yunfeng",
+  "yunhao",
+  "yunxi",
+  "yunyang",
+  "yunye",
+  "yushu",
+];
+const NOVELTY_VOICE_HINTS = [
+  "badnews",
+  "bahh",
+  "bells",
+  "boing",
+  "bubbles",
+  "cellos",
+  "eddy",
+  "flo",
+  "goodnews",
+  "grandma",
+  "grandpa",
+  "organ",
+  "rocko",
+  "sandy",
+  "shelley",
+  "trinoids",
+  "whisper",
+  "wobble",
+  "zarvox",
+];
+
+function compactVoiceName(voice) {
+  return `${voice?.name || ""}${voice?.voiceURI || ""}`
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function browserVoiceGroup(voice) {
+  const name = compactVoiceName(voice);
+  if (NOVELTY_VOICE_HINTS.some((hint) => name.includes(hint))) {
+    return "novelty";
+  }
+  if (NATURAL_FEMALE_VOICE_HINTS.some((hint) => name.includes(hint))) {
+    return "female";
+  }
+  if (NATURAL_MALE_VOICE_HINTS.some((hint) => name.includes(hint))) {
+    return "male";
+  }
+  return "unknown";
+}
+
+function browserVoiceScore(voice, targetGender) {
+  const language = String(voice.lang || "").replace("_", "-").toLowerCase();
+  let score = language === "zh-cn" ? 60 : language.startsWith("zh") ? 35 : 0;
+  const group = browserVoiceGroup(voice);
+  if (group === "novelty") {
+    score -= 120;
+  } else if (group === targetGender) {
+    score += 45;
+  } else if (["female", "male"].includes(group)) {
+    score -= 35;
+  } else {
+    score += 5;
+  }
+  if (voice.default) score += 3;
+  return score;
+}
+
+function stableVoiceHash(value) {
+  return [...String(value || "")].reduce(
+    (total, character) => (total * 31 + character.charCodeAt(0)) >>> 0,
+    0,
+  );
+}
+
+function selectNaturalBrowserVoice(character, preset, voices) {
+  if (!voices.length) return null;
+  const targetGender = preset?.gender || character?.gender || "unknown";
+  const ranked = voices
+    .map((voice) => ({
+      voice,
+      score: browserVoiceScore(voice, targetGender),
+    }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        String(left.voice.name).localeCompare(String(right.voice.name)),
+    );
+  const bestScore = ranked[0].score;
+  const naturalShortlist = ranked.filter(
+    (item) =>
+      item.score >= bestScore - 4 &&
+      browserVoiceGroup(item.voice) !== "novelty",
+  );
+  const shortlist = naturalShortlist.length ? naturalShortlist : [ranked[0]];
+  const key = character?.voice_id || character?.id || "narrator";
+  return shortlist[stableVoiceHash(key) % shortlist.length].voice;
+}
+
+function clampNumber(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, Number(value)));
+}
+
 async function startBrowserPreview(startIndex = 0, endIndex = null) {
   if (state.analysisStale) {
     showMessage("原文已经变更，请重新分析后再试听。");
@@ -1574,16 +1707,22 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
       applyPronunciationsToText(segment.text),
     );
     setActiveSegment(segmentIndex);
-    utterance.lang = "zh-CN";
-    utterance.rate =
-      (preset?.browser_rate || 1) * Number(elements.previewSpeed.value || 1);
-    utterance.pitch = preset?.browser_pitch || 1;
-    if (chineseVoices.length) {
-      const hash = [...(character?.voice_id || "")].reduce(
-        (total, value) => total + value.charCodeAt(0),
-        0,
-      );
-      utterance.voice = chineseVoices[hash % chineseVoices.length];
+    const selectedVoice = selectNaturalBrowserVoice(
+      character,
+      preset,
+      chineseVoices,
+    );
+    utterance.lang = selectedVoice?.lang || "zh-CN";
+    const baseRate = clampNumber(preset?.browser_rate || 1, 0.88, 1.08);
+    utterance.rate = clampNumber(
+      baseRate * Number(elements.previewSpeed.value || 1),
+      0.75,
+      1.5,
+    );
+    utterance.pitch = clampNumber(preset?.browser_pitch || 1, 0.92, 1.1);
+    utterance.volume = 1;
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
     utterance.onend = () => window.setTimeout(speakNext, 140);
     utterance.onerror = () => window.setTimeout(speakNext, 80);
@@ -1635,6 +1774,11 @@ function waitForBrowserVoices() {
 
 function scheduleRenderPlan(provider = state.lastProvider) {
   window.clearTimeout(state.planTimer);
+  if (!provider) {
+    elements.renderPlan.textContent =
+      "设备自然试听已经可用；安装 Mac 中文系统声音或连接 CosyVoice 后可生成下载文件。";
+    return;
+  }
   state.planTimer = window.setTimeout(
     () => refreshRenderPlan(provider, false),
     500,
@@ -1643,6 +1787,11 @@ function scheduleRenderPlan(provider = state.lastProvider) {
 
 async function refreshRenderPlan(provider = state.lastProvider, showErrors = false) {
   if (!state.analysis || state.analysisStale) return null;
+  if (!provider) {
+    elements.renderPlan.textContent =
+      "目前只有设备自然试听可用，尚未连接可导出的语音生成方式。";
+    return null;
+  }
   state.lastProvider = provider;
   if (showErrors) setBusy(elements.refreshPlanButton, true, "正在估算…");
   try {
@@ -1661,26 +1810,25 @@ async function refreshRenderPlan(provider = state.lastProvider, showErrors = fal
 }
 
 function applyRenderPlan(plan) {
-  const isHighQuality = plan.provider === "dashscope";
-  const ready = isHighQuality ? Number(plan.cached_segments) : 0;
-  const remaining = isHighQuality
-    ? Number(plan.estimated_requests)
-    : Number(plan.segments);
-  const remainingCharacters = isHighQuality
-    ? Number(plan.estimated_billable_characters)
-    : Number(plan.billable_characters);
+  const isPaid = plan.provider === "dashscope";
+  const isLocal = plan.provider === "local";
+  const ready = Number(plan.cached_segments) || 0;
+  const remaining = Number(plan.estimated_requests) || 0;
+  const remainingCharacters =
+    Number(plan.estimated_billable_characters) || 0;
   const cost =
-    !isHighQuality ||
+    !isPaid ||
     plan.estimated_cost_cny === null ||
     plan.estimated_cost_cny === undefined
       ? ""
       : `<span><strong>约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}</strong> 预计费用</span>`;
-  const note =
-    isHighQuality
-      ? remaining
-        ? `已有 ${ready} 句准备好；实际费用以最终账单为准。`
-        : "所有句子都已准备好，再次生成不会重复制作声音。"
-      : "现在可以先免费试听；连接高品质语音服务后即可生成可下载成片。";
+  const note = isLocal
+    ? remaining
+      ? `将使用 Mac 的真实中文系统声音；已有 ${ready} 句可直接复用。`
+      : "所有句子都已经生成过，可直接复用并导出。"
+    : remaining
+      ? `已有 ${ready} 句准备好；实际费用以最终账单为准。`
+      : "所有句子都已准备好，再次生成不会重复制作声音。";
   elements.renderPlan.innerHTML = `
     <span><strong>${Number(plan.segments).toLocaleString()}</strong> 句朗读内容</span>
     <span><strong>${remainingCharacters.toLocaleString()}</strong> 字待生成</span>
@@ -1702,10 +1850,15 @@ async function renderSingleSegment(index) {
     showMessage("请先重新识别角色，再修改这句话。");
     return;
   }
-  if (!state.config?.providers?.dashscope?.ready) {
+  const provider = state.config?.providers?.dashscope?.ready
+    ? "dashscope"
+    : state.config?.providers?.local?.ready
+      ? "local"
+      : null;
+  if (!provider) {
     startBrowserPreview(index, index + 1);
     showMessage(
-      "高品质语音服务尚未连接，已先用设备声音试听这句；连接后同一按钮会只重新生成这一句。",
+      "已先用设备的自然中文声音试听这句；安装 Mac 中文系统声音或连接 CosyVoice 后，同一按钮会只重新生成这一句。",
       true,
     );
     return;
@@ -1725,9 +1878,9 @@ async function renderSingleSegment(index) {
     const analysis = singleSegmentAnalysis(index);
     const plan = await requestJson("/api/render/plan", {
       method: "POST",
-      body: JSON.stringify({ analysis, provider: "dashscope" }),
+      body: JSON.stringify({ analysis, provider }),
     });
-    if (Number(plan.estimated_requests) > 0) {
+    if (provider === "dashscope" && Number(plan.estimated_requests) > 0) {
       const cost =
         plan.estimated_cost_cny === null ||
         plan.estimated_cost_cny === undefined
@@ -1747,8 +1900,8 @@ async function renderSingleSegment(index) {
       body: JSON.stringify({
         analysis: state.analysis,
         segment_id: segment.id,
-        provider: "dashscope",
-        confirm_cost: true,
+        provider,
+        confirm_cost: provider === "dashscope",
       }),
     });
     if (result.status !== "completed" || !result.audio_url) {
@@ -1767,11 +1920,13 @@ async function renderSingleSegment(index) {
     elements.audioMeta.textContent =
       result.cache_hits > 0
         ? "直接使用了已准备好的版本"
-        : "只生成了这一句；下次生成全书时会直接复用";
+        : provider === "local"
+          ? "使用 Mac 本地中文语音生成；下次生成全书时会直接复用"
+          : "只生成了这一句；下次生成全书时会直接复用";
     elements.resultAudio.play().catch(() => {});
     elements.audioResult.scrollIntoView({ behavior: "smooth", block: "center" });
     showMessage("这句话已重新生成，其他句子没有重复处理。", true);
-    scheduleRenderPlan("dashscope");
+    scheduleRenderPlan(provider);
   } catch (error) {
     showMessage(error.message);
   } finally {
@@ -1804,13 +1959,13 @@ async function renderAudio(provider) {
   const activeButton =
     provider === "dashscope"
       ? elements.dashscopeRenderButton
-      : elements.demoRenderButton;
+      : elements.localRenderButton;
   setBusy(
     activeButton,
     true,
     provider === "dashscope"
       ? "正在加入后台任务…"
-      : "正在启动链路检查…",
+      : "正在调用 Mac 中文语音…",
   );
 
   try {
@@ -1860,7 +2015,7 @@ async function renderAudio(provider) {
     setBusy(
       activeButton,
       false,
-      provider === "dashscope" ? "开始生成" : "运行离线链路检查",
+      provider === "dashscope" ? "开始生成" : "免费生成（Mac）",
     );
     updateActionAvailability();
   }
@@ -1902,7 +2057,12 @@ function applyRenderJob(job) {
     ? job.failed_segments
     : [];
   state.renderJob = job;
-  state.lastProvider = job.provider || state.lastProvider;
+  if (
+    (job.provider === "local" && state.config?.providers?.local?.ready) ||
+    (job.provider === "dashscope" && state.config?.providers?.dashscope?.ready)
+  ) {
+    state.lastProvider = job.provider;
+  }
   elements.renderJobPanel.hidden = false;
   elements.renderJobPanel.dataset.status = job.status;
   elements.renderJobStatus.textContent =
@@ -1947,7 +2107,11 @@ function applyRenderJob(job) {
     elements.downloadLink.textContent =
       `下载 ${String(job.format || "wav").toUpperCase()} ↓`;
     elements.audioTitle.textContent =
-      job.provider === "demo" ? "离线链路检查已完成" : "多人有声书已生成";
+      job.provider === "local"
+        ? "Mac 本地多人朗读已生成"
+        : job.provider === "demo"
+          ? "内部音频检查已完成"
+          : "多人有声书已生成";
     elements.audioMeta.textContent =
       `${completed} 句 · 后台生成完成，可播放或下载完整章节`;
     elements.wavDownloadLink.hidden =
@@ -1962,7 +2126,7 @@ function applyRenderJob(job) {
   if (previousStatus !== job.status) {
     if (job.status === "completed") {
       showMessage("这一章已经全部生成完成。", true);
-      scheduleRenderPlan(job.provider);
+      scheduleRenderPlan(state.lastProvider);
     } else if (job.status === "paused") {
       showMessage("生成已暂停，已经完成的句子仍然可以播放。", true);
     } else if (job.status === "partial") {
@@ -1997,6 +2161,12 @@ async function pollRenderJob(jobId) {
   try {
     const job = await requestJson(`/api/render/jobs/${jobId}`);
     if (state.renderJobIds[renderContextKey()] !== jobId) return;
+    if (job.provider === "demo") {
+      delete state.renderJobIds[renderContextKey()];
+      resetRenderJobView();
+      scheduleDraftSave();
+      return;
+    }
     applyRenderJob(job);
     scheduleRenderJobPoll(jobId);
   } catch (error) {
@@ -2017,6 +2187,11 @@ async function restoreRenderJobForCurrentContext() {
   try {
     const job = await requestJson(`/api/render/jobs/${jobId}`);
     if (state.renderJobIds[renderContextKey()] !== jobId) return;
+    if (job.provider === "demo") {
+      delete state.renderJobIds[contextKey];
+      scheduleDraftSave();
+      return;
+    }
     applyRenderJob(job);
     scheduleRenderJobPoll(jobId, 300);
   } catch {
@@ -2123,8 +2298,11 @@ function updateActionAvailability() {
   elements.playButton.disabled = unavailable || state.isSpeaking;
   elements.stopButton.disabled = !state.isSpeaking;
   elements.previewSpeed.disabled = state.isRendering;
-  elements.demoRenderButton.disabled = unavailable || activeRenderJob;
-  elements.refreshPlanButton.disabled = unavailable;
+  elements.localRenderButton.disabled =
+    unavailable ||
+    activeRenderJob ||
+    !state.config?.providers?.local?.ready;
+  elements.refreshPlanButton.disabled = unavailable || !state.lastProvider;
   elements.dashscopeRenderButton.disabled =
     unavailable ||
     activeRenderJob ||
