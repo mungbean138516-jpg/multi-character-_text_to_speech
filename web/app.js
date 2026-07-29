@@ -23,9 +23,9 @@ const DEMO_TEXT = `雨敲在旧车站的玻璃顶上。林夏抱紧书包，望�
 
 “可外面在下暴雨！”陈默喊道。
 
-长椅旁的老奶奶抬起头，平静地说道：“年轻人，怕的从来不是雨，是不知道为什么出发。”
-
 一个小女孩从售票窗后探出脑袋，兴奋地叫道：“火车来啦！”
+
+她身旁的小男孩挥着红色车票，笑着说道：“我也看见啦！”
 
 远处传来汽笛声。林夏转过身，眼睛亮了起来。
 
@@ -65,6 +65,9 @@ const state = {
   lastProvider: null,
   speechSession: 0,
   activeSegmentIndex: null,
+  voicePreviewAudio: null,
+  voicePreviewButton: null,
+  voicePreviewCharacterId: null,
   pronunciationSegmentIndex: null,
   sourceFile: null,
   draftTimer: null,
@@ -183,7 +186,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.clearDraftButton.addEventListener("click", clearSavedDraft);
   elements.analyzeButton.addEventListener("click", analyzeText);
   elements.playButton.addEventListener("click", () => startBrowserPreview(0));
-  elements.stopButton.addEventListener("click", () => stopBrowserPreview());
+  elements.stopButton.addEventListener("click", stopAllPreviews);
   elements.previewSpeed.addEventListener("change", () => {
     scheduleDraftSave();
     if (state.isSpeaking && state.activeSegmentIndex !== null) {
@@ -275,20 +278,26 @@ function updateProviderNotice() {
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
   const localReady = Boolean(state.config?.providers?.local?.ready);
   elements.providerNotice.textContent = neuralReady
-    ? "免费 Neural 中文声线已就绪：声音更自然、无需 API Key，但生成时需要联网。"
+    ? "免费版已就绪：旁白、小女孩、小男孩、成年女、成年男共 5 类精选 Neural 声线，试听与生成使用同一套真声音。"
     : dashscopeReady
       ? localReady
-        ? "CosyVoice 与 Mac 免费本地语音均已就绪，可任选一种生成。"
-        : "CosyVoice 已就绪，生成前会显示预计内容和费用。"
+        ? "高级 CosyVoice 与 Mac 免费本地语音均已就绪，可任选一种生成。"
+        : "高级 CosyVoice 已就绪，生成前会显示预计内容和费用。"
       : localReady
         ? "当前使用 Mac 免费本地声音；安装 Neural 声线包后可获得更自然的朗读。"
         : "现在可用设备声音试听；安装 Neural 声线包后可免费生成下载音频。";
+  elements.playButton.textContent = "▶ 快速试听（设备）";
   elements.neuralRenderButton.hidden = !neuralReady;
   elements.localRenderButton.hidden = !localReady;
   const label = elements.dashscopeRenderButton.querySelector("span");
   if (label) {
-    label.textContent = dashscopeReady ? "开始生成" : "高品质语音待连接";
+    label.textContent = dashscopeReady
+      ? "高级声线生成"
+      : "🔒 高级声线（未开通）";
   }
+  elements.dashscopeRenderButton.title = dashscopeReady
+    ? "使用已连接的付费 CosyVoice 服务"
+    : "需要团队接入付费语音服务后开放";
   elements.dashscopeRenderButton.classList.toggle(
     "primary-button",
     !neuralReady,
@@ -562,17 +571,19 @@ function normalizeCharacterRegistry(value) {
             typeof character.id === "string" &&
             typeof character.name === "string",
         )
-        .map((character) => ({
-          aliases: [],
-          traits: [],
-          evidence: [],
-          locked: false,
-          gender: "unknown",
-          age_group: "unknown",
-          voice_id: "",
-          confidence: 0.5,
-          ...deepCopy(character),
-        }))
+        .map((character) =>
+          migrateAutomaticPremiumVoice({
+            aliases: [],
+            traits: [],
+            evidence: [],
+            locked: false,
+            gender: "unknown",
+            age_group: "unknown",
+            voice_id: "",
+            confidence: 0.5,
+            ...deepCopy(character),
+          }),
+        )
     : [];
   const characters = [];
   let primaryCount = 0;
@@ -941,6 +952,7 @@ function updateCounter() {
 
 function resetAnalysis() {
   stopBrowserPreview();
+  stopCharacterVoicePreview();
   resetRenderJobView();
   state.analysis = null;
   state.analysisSourceText = "";
@@ -1004,11 +1016,13 @@ async function analyzeText() {
 }
 
 function normalizeAnalysis(analysis) {
-  analysis.characters = (analysis.characters || []).map((character) => ({
-    aliases: [],
-    locked: false,
-    ...character,
-  }));
+  analysis.characters = (analysis.characters || []).map((character) =>
+    migrateAutomaticPremiumVoice({
+      aliases: [],
+      locked: false,
+      ...character,
+    }),
+  );
   analysis.segments = (analysis.segments || []).map((segment) => ({
     locked: false,
     ...segment,
@@ -1017,6 +1031,32 @@ function normalizeAnalysis(analysis) {
   analysis.pronunciations = analysis.pronunciations || {};
   recomputeSummary(analysis);
   return analysis;
+}
+
+function migrateAutomaticPremiumVoice(character) {
+  const selected = state.config?.voices?.find(
+    (voice) => voice.id === character.voice_id,
+  );
+  if (character.locked || selected?.access !== "premium") {
+    return character;
+  }
+  const gender =
+    character.gender && character.gender !== "unknown"
+      ? character.gender
+      : selected.gender;
+  const age =
+    character.age_group && character.age_group !== "unknown"
+      ? character.age_group
+      : selected.age_group;
+  if (character.id === "narrator") {
+    character.voice_id = "narrator_f";
+  } else if (age === "child") {
+    character.voice_id = gender === "male" ? "child_m" : "child_f";
+  } else {
+    character.voice_id =
+      gender === "male" ? "adult_m_calm" : "adult_f_soft";
+  }
+  return character;
 }
 
 function recomputeSummary(analysis = state.analysis) {
@@ -1065,6 +1105,7 @@ function renderAnalysisSummary() {
 }
 
 function renderCharacters() {
+  stopCharacterVoicePreview();
   elements.characterGrid.innerHTML = "";
   for (const character of state.analysis.characters) {
     const card = document.createElement("article");
@@ -1085,6 +1126,11 @@ function renderCharacters() {
             .filter(Boolean)
             .join(" · ");
     const evidence = (character.evidence || [])[0] || "等待更多文本证据";
+    const selectedVoice = state.config.voices.find(
+      (voice) => voice.id === character.voice_id,
+    );
+    const accessCopy = voiceAccessCopy(selectedVoice);
+    const previewState = characterPreviewState(selectedVoice);
     const mergeTargets = state.analysis.characters
       .filter(
         (candidate) =>
@@ -1113,7 +1159,13 @@ function renderCharacters() {
         <label class="field-label voice-field">默认声音
           ${buildVoiceSelect(character.voice_id)}
         </label>
-        <button class="mini-button voice-preview-button" type="button">▶ 试听</button>
+        <button class="mini-button voice-preview-button" type="button"
+          data-idle-label="${escapeAttribute(previewState.label)}"
+          data-preview-locked="${previewState.locked ? "true" : "false"}"
+          ${previewState.locked ? "disabled" : ""}>${escapeHtml(previewState.label)}</button>
+        <small class="voice-access-note ${selectedVoice?.access === "premium" ? "premium" : ""}">
+          ${escapeHtml(accessCopy)}
+        </small>
       </div>
       <details class="character-details">
         <summary>角色信息与别名</summary>
@@ -1179,12 +1231,28 @@ function renderCharacters() {
       lockCharacter();
     });
     card.querySelector(".voice-select").addEventListener("change", (event) => {
+      stopCharacterVoicePreview();
       character.voice_id = event.target.value;
+      const voice = state.config.voices.find(
+        (candidate) => candidate.id === character.voice_id,
+      );
+      const note = card.querySelector(".voice-access-note");
+      note.textContent = voiceAccessCopy(voice);
+      note.classList.toggle("premium", voice?.access === "premium");
+      const previewButton = card.querySelector(".voice-preview-button");
+      const previewState = characterPreviewState(voice);
+      previewButton.dataset.idleLabel = previewState.label;
+      previewButton.dataset.previewLocked = previewState.locked
+        ? "true"
+        : "false";
+      previewButton.textContent = previewState.label;
+      previewButton.disabled = previewState.locked;
       lockCharacter();
     });
-    card
-      .querySelector(".voice-preview-button")
-      .addEventListener("click", () => previewCharacterVoice(character.id));
+    const previewButton = card.querySelector(".voice-preview-button");
+    previewButton.addEventListener("click", () =>
+      previewCharacterVoice(character.id, previewButton),
+    );
     if (character.id !== "narrator") {
       card.querySelector(".alias-input").addEventListener("change", (event) => {
         character.aliases = uniqueValues(
@@ -1502,15 +1570,39 @@ function buildSelect(options, selected, className) {
 }
 
 function buildVoiceSelect(selected) {
-  const options = state.config.voices
-    .map(
-      (voice) =>
-        `<option value="${escapeAttribute(voice.id)}" ${
-          voice.id === selected ? "selected" : ""
-        }>${escapeHtml(voice.label)} · ${escapeHtml(voice.description)}</option>`,
-    )
+  const premiumReady = Boolean(state.config?.voice_access?.premium_ready);
+  const buildOption = (voice, disabled = false) =>
+    `<option value="${escapeAttribute(voice.id)}" ${
+      voice.id === selected ? "selected" : ""
+    } ${disabled ? "disabled" : ""}>${escapeHtml(voice.label)} · ${escapeHtml(voice.description)}</option>`;
+  const freeOptions = state.config.voices
+    .filter((voice) => voice.access === "free")
+    .map((voice) => buildOption(voice))
     .join("");
-  return `<select class="voice-select">${options}</select>`;
+  const premiumOptions = state.config.voices
+    .filter((voice) => voice.access === "premium")
+    .map((voice) => buildOption(voice, !premiumReady))
+    .join("");
+  const premiumLabel = premiumReady
+    ? "高级声线 · 付费服务已连接"
+    : "🔒 高级声线 · 付费服务";
+  return `
+    <select class="voice-select">
+      <optgroup label="免费精选 · 5 种自然角色声线">${freeOptions}</optgroup>
+      <optgroup label="${premiumLabel}">${premiumOptions}</optgroup>
+    </select>
+  `;
+}
+
+function voiceAccessCopy(voice) {
+  if (voice?.access === "premium") {
+    return state.config?.voice_access?.premium_ready
+      ? "高级声线已连接 · 试听和生成可能产生供应商费用"
+      : "🔒 高级声线：需要连接付费语音服务；可改选上方免费声线";
+  }
+  return state.config?.providers?.neural?.ready
+    ? "✓ 免费精选 · 点击试听会使用 Neural 真声音"
+    : "免费精选 · 当前先用设备声音，安装 Neural 包后自动升级";
 }
 
 function confidenceLevel(confidence) {
@@ -1519,7 +1611,53 @@ function confidenceLevel(confidence) {
   return "low";
 }
 
-function previewCharacterVoice(characterId) {
+function characterPreviewState(voice) {
+  if (voice?.access === "premium") {
+    const ready = Boolean(state.config?.voice_access?.premium_ready);
+    return {
+      label: ready ? "▶ 高级试听" : "🔒 高级试听",
+      locked: !ready,
+      provider: ready ? "dashscope" : null,
+    };
+  }
+  return {
+    label: state.config?.providers?.neural?.ready
+      ? "▶ Neural 试听"
+      : "▶ 设备试听",
+    locked: false,
+    provider: state.config?.providers?.neural?.ready ? "neural" : null,
+  };
+}
+
+function stopCharacterVoicePreview() {
+  const audio = state.voicePreviewAudio;
+  if (audio) {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.removeAttribute("src");
+  }
+  if (state.voicePreviewButton) {
+    const idleLabel =
+      state.voicePreviewButton.dataset.idleLabel || "▶ 试听";
+    setBusy(
+      state.voicePreviewButton,
+      false,
+      idleLabel,
+    );
+  }
+  state.voicePreviewAudio = null;
+  state.voicePreviewButton = null;
+  state.voicePreviewCharacterId = null;
+  if (elements.stopButton) updateActionAvailability();
+}
+
+function stopAllPreviews() {
+  stopBrowserPreview();
+  stopCharacterVoicePreview();
+  updateActionAvailability();
+}
+
+async function previewCharacterVoice(characterId, button) {
   const index = state.analysis.segments.findIndex(
     (segment) => segment.speaker_id === characterId,
   );
@@ -1527,7 +1665,139 @@ function previewCharacterVoice(characterId) {
     showMessage("这个角色目前没有台词可供试听。");
     return;
   }
-  startBrowserPreview(index, index + 1);
+  const character = state.analysis.characters.find(
+    (candidate) => candidate.id === characterId,
+  );
+  const voice = state.config.voices.find(
+    (candidate) => candidate.id === character?.voice_id,
+  );
+  const previewState = characterPreviewState(voice);
+  if (previewState.locked) {
+    showMessage("这条高级声线尚未接入；请先改选免费声线。");
+    return;
+  }
+  if (!previewState.provider) {
+    stopCharacterVoicePreview();
+    startBrowserPreview(index, index + 1);
+    showMessage(
+      "当前先用设备声音试听；安装免费 Neural 声线包后，这个按钮会自动使用生成时的同一条真声音。",
+      true,
+    );
+    return;
+  }
+
+  if (
+    state.voicePreviewCharacterId === characterId &&
+    state.voicePreviewAudio
+  ) {
+    if (state.voicePreviewAudio.paused) {
+      state.voicePreviewAudio.play().then(() => {
+        setBusy(button, false, "■ 停止");
+      }).catch(() => {
+        showMessage("声音已经准备好，请使用页面下方播放器试听。");
+      });
+    } else {
+      stopCharacterVoicePreview();
+    }
+    return;
+  }
+
+  stopBrowserPreview();
+  stopCharacterVoicePreview();
+  state.isRendering = true;
+  updateActionAvailability();
+  setBusy(button, true, "正在准备…");
+  hideMessage();
+  let previewStarted = false;
+  try {
+    const segment = state.analysis.segments[index];
+    const analysis = singleSegmentAnalysis(index);
+    if (previewState.provider === "dashscope") {
+      const plan = await requestJson("/api/render/plan", {
+        method: "POST",
+        body: JSON.stringify({
+          analysis,
+          provider: previewState.provider,
+        }),
+      });
+      if (Number(plan.estimated_requests) > 0) {
+        const cost =
+          plan.estimated_cost_cny === null ||
+          plan.estimated_cost_cny === undefined
+            ? "当前未显示单价"
+            : `预计约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}`;
+        if (
+          !window.confirm(
+            `试听“${character?.name || "这个角色"}”的一句话，共约 ` +
+              `${plan.estimated_billable_characters} 个字，${cost}。确认继续吗？`,
+          )
+        ) {
+          return;
+        }
+      }
+    }
+    const result = await requestJson("/api/render/segment", {
+      method: "POST",
+      body: JSON.stringify({
+        analysis: state.analysis,
+        segment_id: segment.id,
+        provider: previewState.provider,
+        confirm_cost: previewState.provider === "dashscope",
+      }),
+    });
+    if (result.status !== "completed" || !result.audio_url) {
+      throw new Error("这个角色的试听暂时没有生成成功，请稍后再试。");
+    }
+
+    const audio = new Audio(result.audio_url);
+    audio.preload = "auto";
+    state.voicePreviewAudio = audio;
+    state.voicePreviewButton = button;
+    state.voicePreviewCharacterId = characterId;
+    audio.onended = () => stopCharacterVoicePreview();
+    audio.onerror = () => {
+      stopCharacterVoicePreview();
+      showMessage("试听音频暂时无法播放，请稍后再试。");
+    };
+    state.isRendering = false;
+    updateActionAvailability();
+    setBusy(button, false, "■ 停止");
+    previewStarted = true;
+    await audio.play();
+    const providerCopy =
+      previewState.provider === "dashscope"
+        ? "高级声线"
+        : "免费 Neural 真声";
+    showMessage(
+      `${character?.name || "这个角色"}正在使用${providerCopy}试听；完整生成会沿用同一声音。`,
+      true,
+    );
+  } catch (error) {
+    if (previewStarted && state.voicePreviewAudio) {
+      setBusy(button, false, "▶ 播放");
+      elements.audioResult.hidden = false;
+      elements.resultAudio.src = state.voicePreviewAudio.src;
+      elements.audioTitle.textContent = "角色试听已经准备好";
+      elements.audioMeta.textContent = "如果浏览器阻止自动播放，请点击播放器开始。";
+      elements.downloadLink.href = state.voicePreviewAudio.src;
+      elements.downloadLink.textContent = "下载本句 WAV ↓";
+      elements.wavDownloadLink.hidden = true;
+      showMessage("试听已经准备好，请点击页面下方播放器播放。", true);
+    } else {
+      stopCharacterVoicePreview();
+      showMessage(error.message);
+    }
+  } finally {
+    state.isRendering = false;
+    if (!state.voicePreviewAudio) {
+      setBusy(
+        button,
+        false,
+        button.dataset.idleLabel || "▶ 试听",
+      );
+    }
+    updateActionAvailability();
+  }
 }
 
 function applyPronunciationsToText(text) {
@@ -1708,6 +1978,7 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     showMessage("当前浏览器不支持 Web Speech 试听，请使用 Chrome 或 Safari。");
     return;
   }
+  stopCharacterVoicePreview();
   stopBrowserPreview();
   state.isSpeaking = true;
   const session = state.speechSession;
@@ -1895,6 +2166,7 @@ async function renderSingleSegment(index) {
     showMessage("请先重新识别角色，再修改这句话。");
     return;
   }
+  stopCharacterVoicePreview();
   const preferredProvider = state.lastProvider;
   const provider =
     preferredProvider &&
@@ -1996,6 +2268,7 @@ async function renderAudio(provider) {
     showMessage("原文已经变更，请重新分析后再生成。");
     return;
   }
+  stopCharacterVoicePreview();
   if (currentRenderJobIsActive()) {
     showMessage("这一章已经在后台生成，不需要重复提交。");
     return;
@@ -2361,7 +2634,8 @@ function updateActionAvailability() {
     !state.analysis || state.analysisStale || state.isRendering;
   const activeRenderJob = currentRenderJobIsActive();
   elements.playButton.disabled = unavailable || state.isSpeaking;
-  elements.stopButton.disabled = !state.isSpeaking;
+  elements.stopButton.disabled =
+    !state.isSpeaking && !state.voicePreviewAudio;
   elements.previewSpeed.disabled = state.isRendering;
   elements.neuralRenderButton.disabled =
     unavailable ||
@@ -2382,6 +2656,14 @@ function updateActionAvailability() {
     ".sentence-button",
   )) {
     button.disabled = unavailable || state.isSpeaking;
+  }
+  for (const button of elements.characterGrid.querySelectorAll(
+    ".voice-preview-button",
+  )) {
+    button.disabled =
+      unavailable ||
+      state.isSpeaking ||
+      button.dataset.previewLocked === "true";
   }
   renderBookNavigation();
 }

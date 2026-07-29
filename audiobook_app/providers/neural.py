@@ -12,43 +12,32 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 1
+NEURAL_VOICE_MAP_VERSION = 2
 
-# The free Edge catalogue currently exposes fourteen Chinese neural voices.
-# Auto-casting uses nine Mandarin / Taiwan Mandarin voices; Cantonese and
-# regional-accent voices stay opt-in so ordinary novel characters do not
-# unexpectedly change dialect. Keep the mapping explicit so a character's
-# voice remains stable across chapters and app restarts.
+# The free experience intentionally uses five tested roles instead of exposing
+# every available Edge voice. The girl voice and narrator remain unchanged;
+# the adult man uses the professional Mandarin narrator voice, and the boy uses
+# Yunxi's documented boy/young-adult role. Elder presets deliberately fall back
+# to a natural adult voice instead of simulating age through pitch shifting.
 NEURAL_VOICE_BY_PRESET: dict[str, str] = {
     "narrator_f": "zh-CN-XiaoxiaoNeural",
-    "narrator_m": "zh-CN-YunyangNeural",
-    "narrator_f_warm": "zh-TW-HsiaoChenNeural",
-    "narrator_m_story": "zh-TW-YunJheNeural",
     "adult_f_soft": "zh-CN-XiaoyiNeural",
-    "adult_f_warm": "zh-TW-HsiaoYuNeural",
-    "adult_m_bright": "zh-CN-YunxiNeural",
     "adult_m_calm": "zh-CN-YunyangNeural",
-    "adult_m_wise": "zh-CN-YunjianNeural",
-    "adult_f_cheerful": "zh-CN-XiaoyiNeural",
-    "adult_f_low": "zh-TW-HsiaoChenNeural",
-    "adult_f_gentle": "zh-TW-HsiaoYuNeural",
-    "adult_f_composed": "zh-CN-XiaoxiaoNeural",
-    "young_m_crisp": "zh-CN-YunxiNeural",
-    "young_f_sweet": "zh-CN-XiaoyiNeural",
-    "young_m_clear": "zh-CN-YunxiaNeural",
-    "adult_m_warm": "zh-TW-YunJheNeural",
-    "adult_m_deadpan": "zh-CN-YunjianNeural",
-    "adult_m_melancholy": "zh-TW-YunJheNeural",
-    "teen_f": "zh-CN-XiaoyiNeural",
     "child_f": "zh-TW-HsiaoYuNeural",
-    "child_m": "zh-CN-YunxiaNeural",
-    "elder_f": "zh-TW-HsiaoChenNeural",
-    "elder_m": "zh-TW-YunJheNeural",
+    "child_m": "zh-CN-YunxiNeural",
 }
 
 _FALLBACK_BY_GENDER = {
-    "female": "zh-CN-XiaoxiaoNeural",
-    "male": "zh-CN-YunxiNeural",
+    "female": "zh-CN-XiaoyiNeural",
+    "male": "zh-CN-YunyangNeural",
+}
+
+_RATE_BY_PRESET = {
+    "narrator_f": "-2%",
+    "adult_f_soft": "+0%",
+    "adult_m_calm": "-1%",
+    "child_f": "+2%",
+    "child_m": "+1%",
 }
 
 
@@ -72,28 +61,21 @@ def select_neural_voice(preset: VoicePreset) -> str:
 
 
 def neural_rate(preset: VoicePreset) -> str:
-    """Use small rate differences while leaving timbre to the neural voice."""
+    """Keep Neural delivery close to each voice's native cadence."""
 
-    percent = round((preset.browser_rate - 1.0) * 50)
-    if preset.age_group == "child":
-        percent = max(percent, 4)
-    elif preset.age_group == "teen":
-        percent = max(percent, 2)
-    elif preset.age_group == "elder":
-        percent = min(percent, -5)
-    percent = max(-6, min(6, percent))
+    curated = _RATE_BY_PRESET.get(preset.id)
+    if curated is not None:
+        return curated
+    percent = round((preset.browser_rate - 1.0) * 25)
+    percent = max(-3, min(3, percent))
     return f"{percent:+d}%"
 
 
 def neural_pitch(preset: VoicePreset) -> str:
-    """Avoid the exaggerated pitch shifting that made old voices sound ghostly."""
+    """Use the Neural voice's native timbre; synthetic aging sounded ghostly."""
 
-    hertz = {
-        "child": 2,
-        "teen": 1,
-        "elder": -2,
-    }.get(preset.age_group, 0)
-    return f"{hertz:+d}Hz"
+    del preset
+    return "+0Hz"
 
 
 def _package_version(distribution: str) -> str:

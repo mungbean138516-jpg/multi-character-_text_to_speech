@@ -264,6 +264,16 @@ class ServerIntegrationTests(unittest.TestCase):
             "edge-tts",
             config["providers"]["neural"]["install_command"],
         )
+        self.assertEqual(config["voice_access"]["free_role_count"], 5)
+        self.assertEqual(
+            len(config["voice_access"]["free_voice_ids"]),
+            5,
+        )
+        self.assertTrue(config["features"]["neural_character_preview"])
+        self.assertEqual(
+            sum(voice["access"] == "free" for voice in config["voices"]),
+            5,
+        )
 
 
 if __name__ == "__main__":

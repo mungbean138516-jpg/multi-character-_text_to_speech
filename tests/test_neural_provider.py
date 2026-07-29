@@ -15,10 +15,10 @@ from audiobook_app.voices import VOICE_BY_ID
 
 
 class NeuralVoicePackProviderTests(unittest.TestCase):
-    def test_auto_cast_uses_nine_non_dialect_neural_voices(self) -> None:
+    def test_free_pack_uses_five_curated_non_dialect_neural_voices(self) -> None:
         voices = set(NEURAL_VOICE_BY_PRESET.values())
 
-        self.assertEqual(len(voices), 9)
+        self.assertEqual(len(voices), 5)
         self.assertFalse(
             any(
                 marker in voice
@@ -27,22 +27,22 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             )
         )
 
-    def test_age_specific_voices_do_not_use_extreme_pitch(self) -> None:
+    def test_roles_use_native_pitch_and_elder_falls_back_to_adult(self) -> None:
         child = VOICE_BY_ID["child_m"]
         elder = VOICE_BY_ID["elder_m"]
 
         self.assertEqual(
             select_neural_voice(child),
-            "zh-CN-YunxiaNeural",
+            "zh-CN-YunxiNeural",
         )
         self.assertEqual(
             select_neural_voice(elder),
-            "zh-TW-YunJheNeural",
+            "zh-CN-YunyangNeural",
         )
-        self.assertEqual(neural_pitch(child), "+2Hz")
-        self.assertEqual(neural_pitch(elder), "-2Hz")
-        self.assertEqual(neural_rate(child), "+4%")
-        self.assertEqual(neural_rate(elder), "-6%")
+        self.assertEqual(neural_pitch(child), "+0Hz")
+        self.assertEqual(neural_pitch(elder), "+0Hz")
+        self.assertEqual(neural_rate(child), "+1%")
+        self.assertEqual(neural_rate(elder), "-3%")
 
     def test_female_first_demo_roles_use_natural_neural_voices(self) -> None:
         self.assertEqual(
@@ -114,8 +114,8 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
                     (
                         "火车来啦！",
                         "zh-TW-HsiaoYuNeural",
-                        "+4%",
-                        "+2Hz",
+                        "+2%",
+                        "+0Hz",
                     )
                 ],
             )

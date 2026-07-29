@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from . import __version__
 from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
 from .epub import parse_epub
@@ -26,7 +27,7 @@ from .providers import (
 )
 from .qwen import QwenNovelAnalyzer, qwen_is_configured
 from .registry import CharacterRegistry
-from .voices import catalog_as_dicts
+from .voices import FREE_VOICE_IDS, catalog_as_dicts
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -102,7 +103,7 @@ class AudiobookHTTPServer(ThreadingHTTPServer):
 
 
 class AudiobookRequestHandler(BaseHTTPRequestHandler):
-    server_version = "MultiVoiceAudiobook/0.8"
+    server_version = f"MultiVoiceAudiobook/{__version__}"
 
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -146,7 +147,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "0.8.0"})
+            self._send_json({"status": "ok", "version": __version__})
             return
         if path == "/api/config":
             local_tts_ready = macos_local_tts_is_available()
@@ -176,7 +177,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                             "ready": neural_tts_ready,
                             "label": "免费 Neural 中文声线（联网）",
                             "detail": (
-                                "九种精选普通话 / 国语神经声线，可播放和导出"
+                                "五种精选中文角色声线，可试听、播放和导出"
                                 if neural_tts_ready
                                 else "安装 edge-tts 与 miniaudio 后启用"
                             ),
@@ -200,6 +201,11 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         },
                     },
                     "voices": catalog_as_dicts(),
+                    "voice_access": {
+                        "free_voice_ids": sorted(FREE_VOICE_IDS),
+                        "free_role_count": len(FREE_VOICE_IDS),
+                        "premium_ready": dashscope_tts_is_configured(),
+                    },
                     "formats": {
                         "wav": {"ready": True, "label": "WAV 无损"},
                         "mp3": {
@@ -228,6 +234,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "progressive_playback": True,
                         "render_pause_resume": True,
                         "refresh_job_recovery": True,
+                        "neural_character_preview": True,
+                        "voice_access_tiers": True,
                     },
                 }
             )

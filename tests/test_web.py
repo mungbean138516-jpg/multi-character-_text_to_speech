@@ -67,6 +67,24 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("NOVELTY_VOICE_HINTS", javascript)
         self.assertIn("HIGH_QUALITY_BROWSER_VOICE_HINTS", javascript)
         self.assertIn('renderAudio("neural")', javascript)
+        self.assertIn("provider: previewState.provider", javascript)
+        self.assertIn('requestJson("/api/render/segment"', javascript)
+        self.assertIn("▶ Neural 试听", javascript)
+
+    def test_free_and_premium_voice_tiers_are_clear(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("免费版 · 5 类精选 Neural 声线", html)
+        self.assertIn("老人、方言与定制声线 · 高级版", html)
+        self.assertIn("免费精选 · 5 种自然角色声线", javascript)
+        self.assertIn("高级声线 · 付费服务", javascript)
+        self.assertIn("付费服务已连接", javascript)
+        self.assertIn("data-preview-locked", javascript)
+        self.assertIn("window.confirm", javascript)
+        self.assertIn("stopAllPreviews", javascript)
+        self.assertIn("migrateAutomaticPremiumVoice", javascript)
+        self.assertIn('voice.access === "premium"', javascript)
 
     def test_book_project_controls_and_storage_contract_are_present(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
