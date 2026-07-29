@@ -77,7 +77,7 @@ class WebContractTests(unittest.TestCase):
 
         self.assertIn("免费版 · 5 类精选 Neural 声线", html)
         self.assertIn("老人、方言与定制声线 · 高级版", html)
-        self.assertIn("免费精选 · 5 种自然角色声线", javascript)
+        self.assertIn("免费精选 · 5 类自然角色声线", javascript)
         self.assertIn("高级声线 · 付费服务", javascript)
         self.assertIn("付费服务已连接", javascript)
         self.assertIn("data-preview-locked", javascript)

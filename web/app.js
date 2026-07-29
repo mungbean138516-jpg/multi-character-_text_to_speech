@@ -1588,7 +1588,7 @@ function buildVoiceSelect(selected) {
     : "🔒 高级声线 · 付费服务";
   return `
     <select class="voice-select">
-      <optgroup label="免费精选 · 5 种自然角色声线">${freeOptions}</optgroup>
+      <optgroup label="免费精选 · 5 类自然角色声线">${freeOptions}</optgroup>
       <optgroup label="${premiumLabel}">${premiumOptions}</optgroup>
     </select>
   `;

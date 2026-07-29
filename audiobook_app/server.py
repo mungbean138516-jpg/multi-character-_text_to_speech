@@ -177,7 +177,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                             "ready": neural_tts_ready,
                             "label": "免费 Neural 中文声线（联网）",
                             "detail": (
-                                "五种精选中文角色声线，可试听、播放和导出"
+                                "五类精选中文角色声线，可试听、播放和导出"
                                 if neural_tts_ready
                                 else "安装 edge-tts 与 miniaudio 后启用"
                             ),

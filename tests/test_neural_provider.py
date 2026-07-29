@@ -15,10 +15,11 @@ from audiobook_app.voices import VOICE_BY_ID
 
 
 class NeuralVoicePackProviderTests(unittest.TestCase):
-    def test_free_pack_uses_five_curated_non_dialect_neural_voices(self) -> None:
+    def test_free_pack_uses_five_curated_non_dialect_role_mappings(self) -> None:
         voices = set(NEURAL_VOICE_BY_PRESET.values())
 
-        self.assertEqual(len(voices), 5)
+        self.assertEqual(len(NEURAL_VOICE_BY_PRESET), 5)
+        self.assertEqual(len(voices), 4)
         self.assertFalse(
             any(
                 marker in voice
@@ -27,14 +28,14 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             )
         )
 
-    def test_child_roles_restore_subtle_tuning_and_elder_stays_natural(self) -> None:
+    def test_child_roles_use_distinct_tuning_and_elder_stays_natural(self) -> None:
         girl = VOICE_BY_ID["child_f"]
         boy = VOICE_BY_ID["child_m"]
         elder = VOICE_BY_ID["elder_m"]
 
         self.assertEqual(
             select_neural_voice(girl),
-            "zh-TW-HsiaoYuNeural",
+            "zh-CN-XiaoyiNeural",
         )
         self.assertEqual(
             select_neural_voice(boy),
@@ -44,10 +45,10 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             select_neural_voice(elder),
             "zh-CN-YunyangNeural",
         )
-        self.assertEqual(neural_pitch(girl), "+2Hz")
+        self.assertEqual(neural_pitch(girl), "+8Hz")
         self.assertEqual(neural_pitch(boy), "+2Hz")
         self.assertEqual(neural_pitch(elder), "+0Hz")
-        self.assertEqual(neural_rate(girl), "+4%")
+        self.assertEqual(neural_rate(girl), "+6%")
         self.assertEqual(neural_rate(boy), "+4%")
         self.assertEqual(neural_rate(elder), "-3%")
 
@@ -62,7 +63,7 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
         )
         self.assertEqual(
             select_neural_voice(VOICE_BY_ID["child_f"]),
-            "zh-TW-HsiaoYuNeural",
+            "zh-CN-XiaoyiNeural",
         )
 
     def test_provider_converts_downloaded_mp3_to_valid_wav(self) -> None:
@@ -120,9 +121,9 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
                 [
                     (
                         "火车来啦！",
-                        "zh-TW-HsiaoYuNeural",
-                        "+4%",
-                        "+2Hz",
+                        "zh-CN-XiaoyiNeural",
+                        "+6%",
+                        "+8Hz",
                     )
                 ],
             )
