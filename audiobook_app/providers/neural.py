@@ -12,19 +12,20 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 2
+NEURAL_VOICE_MAP_VERSION = 3
 
 # The free experience intentionally uses five tested roles instead of exposing
-# every available Edge voice. The girl voice and narrator remain unchanged;
-# the adult man uses the professional Mandarin narrator voice, and the boy uses
-# Yunxi's documented boy/young-adult role. Elder presets deliberately fall back
-# to a natural adult voice instead of simulating age through pitch shifting.
+# every available Edge voice. The narrator and adult roles keep their native
+# timbre. The two child roles restore the better-listening 0.8 tuning: HsiaoYu
+# for the girl and the younger Yunxia voice for the boy, with only a very small
+# child-specific lift. Elder presets deliberately fall back to a natural adult
+# voice instead of simulating age through pitch shifting.
 NEURAL_VOICE_BY_PRESET: dict[str, str] = {
     "narrator_f": "zh-CN-XiaoxiaoNeural",
     "adult_f_soft": "zh-CN-XiaoyiNeural",
     "adult_m_calm": "zh-CN-YunyangNeural",
     "child_f": "zh-TW-HsiaoYuNeural",
-    "child_m": "zh-CN-YunxiNeural",
+    "child_m": "zh-CN-YunxiaNeural",
 }
 
 _FALLBACK_BY_GENDER = {
@@ -36,8 +37,13 @@ _RATE_BY_PRESET = {
     "narrator_f": "-2%",
     "adult_f_soft": "+0%",
     "adult_m_calm": "-1%",
-    "child_f": "+2%",
-    "child_m": "+1%",
+    "child_f": "+4%",
+    "child_m": "+4%",
+}
+
+_PITCH_BY_PRESET = {
+    "child_f": "+2Hz",
+    "child_m": "+2Hz",
 }
 
 
@@ -72,10 +78,9 @@ def neural_rate(preset: VoicePreset) -> str:
 
 
 def neural_pitch(preset: VoicePreset) -> str:
-    """Use the Neural voice's native timbre; synthetic aging sounded ghostly."""
+    """Keep adults native and use only a subtle lift for child presets."""
 
-    del preset
-    return "+0Hz"
+    return _PITCH_BY_PRESET.get(preset.id, "+0Hz")
 
 
 def _package_version(distribution: str) -> str:

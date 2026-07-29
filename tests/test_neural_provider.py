@@ -27,21 +27,28 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             )
         )
 
-    def test_roles_use_native_pitch_and_elder_falls_back_to_adult(self) -> None:
-        child = VOICE_BY_ID["child_m"]
+    def test_child_roles_restore_subtle_tuning_and_elder_stays_natural(self) -> None:
+        girl = VOICE_BY_ID["child_f"]
+        boy = VOICE_BY_ID["child_m"]
         elder = VOICE_BY_ID["elder_m"]
 
         self.assertEqual(
-            select_neural_voice(child),
-            "zh-CN-YunxiNeural",
+            select_neural_voice(girl),
+            "zh-TW-HsiaoYuNeural",
+        )
+        self.assertEqual(
+            select_neural_voice(boy),
+            "zh-CN-YunxiaNeural",
         )
         self.assertEqual(
             select_neural_voice(elder),
             "zh-CN-YunyangNeural",
         )
-        self.assertEqual(neural_pitch(child), "+0Hz")
+        self.assertEqual(neural_pitch(girl), "+2Hz")
+        self.assertEqual(neural_pitch(boy), "+2Hz")
         self.assertEqual(neural_pitch(elder), "+0Hz")
-        self.assertEqual(neural_rate(child), "+1%")
+        self.assertEqual(neural_rate(girl), "+4%")
+        self.assertEqual(neural_rate(boy), "+4%")
         self.assertEqual(neural_rate(elder), "-3%")
 
     def test_female_first_demo_roles_use_natural_neural_voices(self) -> None:
@@ -114,8 +121,8 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
                     (
                         "火车来啦！",
                         "zh-TW-HsiaoYuNeural",
-                        "+2%",
-                        "+0Hz",
+                        "+4%",
+                        "+2Hz",
                     )
                 ],
             )

@@ -248,7 +248,7 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
     ),
     VoicePreset(
         "child_f",
-        "小女孩 · 活泼女声",
+        "小女孩 · 活泼童声",
         "longhuhu_v3",
         "female",
         "child",
@@ -259,11 +259,11 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
     ),
     VoicePreset(
         "child_m",
-        "小男孩 · 清亮男声",
+        "小男孩 · 童真男声",
         "longjielidou_v3",
         "male",
         "child",
-        "年轻、清楚、不做夸张变调",
+        "稚嫩、清楚、轻快",
         1.06,
         1.03,
         285,
