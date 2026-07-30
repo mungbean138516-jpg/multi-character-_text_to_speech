@@ -260,6 +260,35 @@ class ServerIntegrationTests(unittest.TestCase):
             config["providers"]["neural"]["install_command"],
         )
 
+    def test_character_chat_returns_the_selected_character_reply(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {"mode": "local", "text": "林夏说：“我们出发吧。”"},
+        )
+        character = next(
+            item for item in analysis["characters"] if item["name"] == "林夏"
+        )
+        with patch.object(
+            app_server,
+            "chat_with_character",
+            return_value="我已经准备好了。",
+        ) as chat:
+            result = self.post(
+                "/api/character-chat",
+                {
+                    "analysis": analysis,
+                    "character_id": character["id"],
+                    "source_text": "林夏说：“我们出发吧。”",
+                    "message": "你准备好了吗？",
+                    "history": [{"role": "user", "content": "之前的问题"}],
+                },
+            )
+
+        self.assertEqual(result["character_id"], character["id"])
+        self.assertEqual(result["character_name"], "林夏")
+        self.assertEqual(result["reply"], "我已经准备好了。")
+        self.assertEqual(chat.call_args.kwargs["user_message"], "你准备好了吗？")
+
 
 if __name__ == "__main__":
     unittest.main()

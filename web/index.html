@@ -222,6 +222,9 @@
               <button id="stopButton" class="icon-button" type="button" title="停止试听">
                 ■
               </button>
+              <button id="chatToggleButton" class="secondary-button" type="button">
+                与角色对话
+              </button>
             </div>
           </div>
           <div id="nowPlaying" class="now-playing" aria-live="polite">
@@ -229,6 +232,26 @@
             <b>尚未开始播放</b>
             <small>点击任意一句的“从这里听”也可以开始</small>
           </div>
+          <section id="characterChatPanel" class="character-chat" hidden>
+            <div class="character-chat-heading">
+              <div>
+                <strong>和角色聊聊</strong>
+                <span>回复参考已导入的全文，并用该角色的试听声线读出。</span>
+              </div>
+              <label class="inline-field">
+                <span>正在对话</span>
+                <select id="chatCharacterSelect" aria-label="对话角色"></select>
+              </label>
+              <button id="closeChatButton" class="text-button subtle" type="button">收起</button>
+            </div>
+            <div id="chatAvailability" class="chat-availability"></div>
+            <div id="chatTranscript" class="chat-transcript" aria-live="polite"></div>
+            <form id="characterChatForm" class="character-chat-form">
+              <label class="sr-only" for="chatMessageInput">对角色说的话</label>
+              <input id="chatMessageInput" type="text" maxlength="600" placeholder="例如：你为什么决定去北城？" autocomplete="off" />
+              <button id="sendChatButton" class="primary-button compact" type="submit"><span>发送并听回复</span></button>
+            </form>
+          </section>
           <div id="scriptTimeline" class="script-timeline"></div>
         </section>
 

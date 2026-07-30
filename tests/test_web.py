@@ -67,6 +67,8 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("NOVELTY_VOICE_HINTS", javascript)
         self.assertIn("HIGH_QUALITY_BROWSER_VOICE_HINTS", javascript)
         self.assertIn('renderAudio("neural")', javascript)
+        self.assertIn("previewInstalledLocalVoice", javascript)
+        self.assertIn("local_voices", javascript)
 
     def test_book_project_controls_and_storage_contract_are_present(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -91,6 +93,16 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("/resume", javascript)
         self.assertIn("render_job_ids", javascript)
         self.assertIn("restoreRenderJobForCurrentContext", javascript)
+
+    def test_character_chat_uses_book_context_and_character_voice(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="characterChatPanel"', html)
+        self.assertIn('id="chatMessageInput"', html)
+        self.assertIn('requestJson("/api/character-chat"', javascript)
+        self.assertIn("function chatContextText()", javascript)
+        self.assertIn("function speakCharacterReply", javascript)
+        self.assertIn("chat_messages", javascript)
 
 
 if __name__ == "__main__":
