@@ -102,6 +102,8 @@ class WebContractTests(unittest.TestCase):
         self.assertIn('requestJson("/api/character-chat"', javascript)
         self.assertIn("function chatContextText()", javascript)
         self.assertIn("function speakCharacterReply", javascript)
+        self.assertIn("function startNeuralPreview", javascript)
+        self.assertIn('requestJson("/api/preview/neural"', javascript)
         self.assertIn("chat_messages", javascript)
 
 

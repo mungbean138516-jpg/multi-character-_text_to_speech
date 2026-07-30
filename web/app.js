@@ -64,6 +64,8 @@ const state = {
   isRendering: false,
   lastProvider: null,
   speechSession: 0,
+  previewAudio: null,
+  previewAudioFinish: null,
   activeSegmentIndex: null,
   pronunciationSegmentIndex: null,
   sourceFile: null,
@@ -1783,6 +1785,85 @@ function clampNumber(value, minimum, maximum) {
 }
 
 async function startBrowserPreview(startIndex = 0, endIndex = null) {
+  if (state.config?.providers?.neural?.ready) {
+    return startNeuralPreview(startIndex, endIndex);
+  }
+  return startDevicePreview(startIndex, endIndex);
+}
+
+async function startNeuralPreview(startIndex = 0, endIndex = null) {
+  if (state.analysisStale) {
+    showMessage("原文已经变更，请重新分析后再试听。");
+    return;
+  }
+  if (!state.analysis) return;
+  stopBrowserPreview();
+  state.isSpeaking = true;
+  const session = state.speechSession;
+  updateActionAvailability();
+  const characters = new Map(
+    state.analysis.characters.map((character) => [character.id, character]),
+  );
+  let index = Math.max(
+    0,
+    Math.min(startIndex, state.analysis.segments.length - 1),
+  );
+  const stopIndex =
+    endIndex === null
+      ? state.analysis.segments.length
+      : Math.max(index + 1, Math.min(endIndex, state.analysis.segments.length));
+
+  while (state.isSpeaking && session === state.speechSession && index < stopIndex) {
+    const segmentIndex = index++;
+    const segment = state.analysis.segments[segmentIndex];
+    const character = characters.get(segment.speaker_id);
+    if (!character) continue;
+    setActiveSegment(segmentIndex);
+    try {
+      const result = await requestJson("/api/preview/neural", {
+        method: "POST",
+        body: JSON.stringify({
+          analysis: state.analysis,
+          character_id: character.id,
+          text: applyPronunciationsToText(segment.text),
+        }),
+      });
+      if (!result.audio_url) throw new Error("Neural 声线没有返回音频");
+      await playPreviewAudio(result.audio_url, session);
+    } catch (error) {
+      if (session === state.speechSession) {
+        showMessage(error.message || "Neural 即时试听暂时不可用。");
+        stopBrowserPreview();
+      }
+      return;
+    }
+  }
+  if (session === state.speechSession) stopBrowserPreview(true);
+}
+
+function playPreviewAudio(audioUrl, session) {
+  return new Promise((resolve) => {
+    const audio = new Audio(audioUrl);
+    const finish = () => {
+      if (state.previewAudio === audio) {
+        state.previewAudio = null;
+        state.previewAudioFinish = null;
+      }
+      resolve();
+    };
+    state.previewAudio = audio;
+    state.previewAudioFinish = finish;
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(finish);
+    if (session !== state.speechSession) {
+      audio.pause();
+      finish();
+    }
+  });
+}
+
+async function startDevicePreview(startIndex = 0, endIndex = null) {
   if (state.analysisStale) {
     showMessage("原文已经变更，请重新分析后再试听。");
     return;
@@ -1861,6 +1942,10 @@ function stopBrowserPreview(finished = false) {
   if ("speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
+  if (state.previewAudio) {
+    state.previewAudio.pause();
+    state.previewAudioFinish?.();
+  }
   if (elements.scriptTimeline) {
     for (const row of elements.scriptTimeline.querySelectorAll(".script-row")) {
       row.classList.remove("is-playing");
@@ -1910,7 +1995,9 @@ function renderCharacterChat() {
   elements.chatCharacterSelect.value = state.chatCharacterId;
   const chatReady = Boolean(state.config?.features?.character_chat);
   elements.chatAvailability.textContent = chatReady
-    ? "使用千问生成回复；播放将使用该角色当前的浏览器试听声线。"
+    ? state.config?.providers?.neural?.ready
+      ? "使用千问生成回复，并用该角色的 Neural 声线朗读。"
+      : "使用千问生成回复；播放将使用该角色当前的浏览器试听声线。"
     : "配置 DASHSCOPE_API_KEY 与 DASHSCOPE_LLM_BASE_URL 后即可启用角色对话。";
   elements.chatAvailability.classList.toggle("unavailable", !chatReady);
   elements.chatMessageInput.disabled = !chatReady || state.isSpeaking;
@@ -1928,6 +2015,20 @@ function renderCharacterChat() {
 }
 
 async function speakCharacterReply(text, character) {
+  if (state.config?.providers?.neural?.ready) {
+    const result = await requestJson("/api/preview/neural", {
+      method: "POST",
+      body: JSON.stringify({
+        analysis: state.analysis,
+        character_id: character.id,
+        text,
+      }),
+    });
+    if (!result.audio_url) throw new Error("Neural 声线没有返回音频");
+    const audio = new Audio(result.audio_url);
+    await audio.play();
+    return;
+  }
   if (!("speechSynthesis" in window) || !character) return;
   const presets = new Map(state.config.voices.map((voice) => [voice.id, voice]));
   const preset = presets.get(character.voice_id);
@@ -1972,7 +2073,12 @@ async function sendCharacterChat(event) {
     elements.chatMessageInput.value = "";
     renderCharacterChat();
     scheduleDraftSave();
-    await speakCharacterReply(result.reply, character);
+    if (result.audio_url) {
+      const audio = new Audio(result.audio_url);
+      await audio.play();
+    } else {
+      await speakCharacterReply(result.reply, character);
+    }
   } catch (error) {
     showMessage(error.message || "角色暂时无法回答，请稍后再试。");
   } finally {

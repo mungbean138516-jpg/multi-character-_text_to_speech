@@ -15,7 +15,7 @@ from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
 from .epub import parse_epub
 from .jobs import RenderJobManager, RenderJobNotFoundError
-from .models import AnalysisResult
+from .models import AnalysisResult, ScriptSegment
 from .providers import (
     DashScopeTTSProvider,
     DemoToneProvider,
@@ -289,6 +289,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 self._handle_analyze(payload)
             elif path == "/api/preview/local-voice":
                 self._handle_local_voice_preview(payload)
+            elif path == "/api/preview/neural":
+                self._handle_neural_preview(payload)
             elif path == "/api/render/plan":
                 self._handle_render_plan(payload)
             elif path == "/api/render/segment":
@@ -424,6 +426,51 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             },
             HTTPStatus.CREATED,
         )
+
+    def _handle_neural_preview(self, payload: dict[str, Any]) -> None:
+        """Render one short, immediately playable Neural line for a character."""
+
+        analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
+        character_id = str(payload.get("character_id", "")).strip()
+        text = str(payload.get("text", "")).strip()
+        if not character_id:
+            raise ValueError("缺少角色")
+        if not text:
+            raise ValueError("请输入要试听的文字")
+        if len(text) > 1_000:
+            raise ValueError("即时试听最多 1000 个字符")
+        character = next(
+            (item for item in analysis.characters if item.id == character_id),
+            None,
+        )
+        if character is None:
+            raise ValueError("找不到这个角色")
+        preview = AnalysisResult(
+            characters=analysis.characters,
+            segments=[
+                ScriptSegment(
+                    id=f"neural-preview-{uuid4().hex}",
+                    kind="dialogue",
+                    text=text,
+                    speaker_id=character.id,
+                )
+            ],
+            analyzer="neural-preview",
+            pronunciations=analysis.pronunciations,
+        )
+        provider = _provider_for_name("neural")
+        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        result = render_audiobook(
+            preview,
+            provider,
+            OUTPUT_ROOT,
+            max_characters=1_000,
+            max_segments=1,
+            cache_root=CACHE_ROOT,
+            max_attempts=TTS_MAX_ATTEMPTS,
+            output_format="wav",
+        )
+        self._send_json(result, HTTPStatus.CREATED)
 
     def _handle_render(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
@@ -597,11 +644,43 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             user_message=user_message,
             history=history,
         )
+        audio_url = None
+        if neural_voice_pack_is_available():
+            try:
+                preview = AnalysisResult(
+                    characters=analysis.characters,
+                    segments=[
+                        ScriptSegment(
+                            id=f"character-chat-{uuid4().hex}",
+                            kind="dialogue",
+                            text=reply,
+                            speaker_id=character.id,
+                        )
+                    ],
+                    analyzer="character-chat",
+                    pronunciations=analysis.pronunciations,
+                )
+                result = render_audiobook(
+                    preview,
+                    _provider_for_name("neural"),
+                    OUTPUT_ROOT,
+                    max_characters=1_000,
+                    max_segments=1,
+                    cache_root=CACHE_ROOT,
+                    max_attempts=TTS_MAX_ATTEMPTS,
+                    output_format="wav",
+                )
+                audio_url = result.get("audio_url")
+            except RuntimeError:
+                # Keep the text conversation usable when the free online
+                # Neural service is temporarily unavailable.
+                audio_url = None
         self._send_json(
             {
                 "character_id": character.id,
                 "character_name": character.name,
                 "reply": reply,
+                "audio_url": audio_url,
             }
         )
 
