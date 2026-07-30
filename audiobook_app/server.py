@@ -16,6 +16,7 @@ from .epub import parse_epub
 from .document_import import parse_document
 from .directing import consistency_check, direct_text
 from .jobs import RenderJobManager, RenderJobNotFoundError
+from .language import detect_text_language
 from .models import AnalysisResult
 from .providers import (
     DashScopeTTSProvider,
@@ -177,12 +178,14 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         },
                         "neural": {
                             "ready": neural_tts_ready,
-                            "label": "免费 Neural 中文声线（联网）",
+                            "label": "免费 Neural 中英文声线（联网）",
                             "detail": (
-                                "九种精选普通话 / 国语神经声线，可播放和导出"
+                                "纯英文自动使用英文 Neural 声线；其他内容使用中文声线"
                                 if neural_tts_ready
                                 else "安装 edge-tts 与 miniaudio 后启用"
                             ),
+                            "supported_languages": ["zh", "en"],
+                            "english_auto_detect": True,
                             "experimental": True,
                             "install_command": (
                                 "python3 -m pip install edge-tts miniaudio"
@@ -376,7 +379,11 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             default_limit=MAX_PRIMARY_CHARACTERS,
         )
         registry.reconcile(analysis)
+        detected_language = detect_text_language(text)
+        for segment in analysis.segments:
+            segment.language = detected_language
         response = analysis.to_dict()
+        response["detected_language"] = detected_language
         response["character_registry"] = registry.to_dict()
         self._send_json(response)
 
