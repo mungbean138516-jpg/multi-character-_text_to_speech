@@ -118,6 +118,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     "analysisSummary",
     "warningList",
     "characterGrid",
+    "consistencyButton",
+    "directorButton",
+    "consistencyResults",
+    "resetEmotionButton",
+    "emotionCurve",
+    "emotionEditor",
+    "voiceSamples",
+    "compareVoicesButton",
+    "voiceSimilarityResults",
     "pronunciationPanel",
     "addPronunciationButton",
     "pronunciationForm",
@@ -190,6 +199,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.nextChapterButton.addEventListener("click", () => moveChapter(1));
   elements.clearDraftButton.addEventListener("click", clearSavedDraft);
   elements.analyzeButton.addEventListener("click", analyzeText);
+  elements.consistencyButton.addEventListener("click", runConsistencyCheck);
+  elements.directorButton.addEventListener("click", applyRuleDirector);
+  elements.resetEmotionButton.addEventListener("click", resetEmotionCurve);
+  elements.compareVoicesButton.addEventListener("click", compareVoiceSamples);
   elements.playButton.addEventListener("click", () => startScriptPreview(0));
   elements.stopButton.addEventListener("click", stopAllPreviews);
   elements.previewSpeed.addEventListener("change", () => {
@@ -288,7 +301,7 @@ function updateProviderNotice() {
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
   const localReady = Boolean(state.config?.providers?.local?.ready);
   elements.providerNotice.textContent = neuralReady
-    ? "免费版已就绪：旁白、小女孩、小男孩、成年女、成年男共 5 类精选 Neural 声线，试听与生成使用同一套真声音。"
+    ? "免费版已就绪：5 类精选 Neural 角色声线，纯英文自动切换英文声线；试听与生成使用同一套真声音。"
     : dashscopeReady
       ? localReady
         ? "高级 CosyVoice 与 Mac 免费本地语音均已就绪，可任选一种生成。"
@@ -329,6 +342,13 @@ function updateProviderNotice() {
     "secondary-button",
     neuralReady || dashscopeReady,
   );
+}
+
+function currentAnalysisLanguage() {
+  return state.analysis?.detected_language === "en" ||
+    state.analysis?.segments?.some((segment) => segment.language === "en")
+    ? "en"
+    : "zh";
 }
 
 function loadDemo() {
@@ -377,7 +397,40 @@ function importSourceFile(file) {
     importEpubFile(file);
     return;
   }
+  if (lowerName.endsWith(".pdf") || lowerName.endsWith(".docx")) {
+    importDocumentFile(file);
+    return;
+  }
   importTextFile(file);
+}
+
+async function importDocumentFile(file) {
+  hideMessage();
+  const maxBytes = state.config?.limits?.document_bytes ?? 20_000_000;
+  if (file.size > maxBytes) {
+    showMessage(`文档过大；当前最多 ${(maxBytes / 1_000_000).toFixed(0)} MB。`);
+    return;
+  }
+  setBusy(elements.importFileButton, true, "正在提取正文…");
+  try {
+    const project = await requestJson("/api/import/document", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-VoxCast-Filename": encodeURIComponent(file.name),
+      },
+      body: await file.arrayBuffer(),
+    });
+    openBookProject(
+      project,
+      { name: file.name, encoding: file.name.toLowerCase().endsWith(".pdf") ? "PDF" : "DOCX" },
+      `已导入《${project.title}》，整理出 ${project.chapters.length} 个章节。`,
+    );
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    setBusy(elements.importFileButton, false, "导入文档");
+  }
 }
 
 async function importTextFile(file) {
@@ -1103,6 +1156,8 @@ function renderAnalysis() {
     .join("");
 
   renderCharacters();
+  renderEmotionEditor();
+  renderVoiceSamples();
   renderPronunciations();
   renderTimeline();
   elements.audioResult.hidden = true;
@@ -1294,6 +1349,336 @@ function renderCharacters() {
     }
     elements.characterGrid.appendChild(card);
   }
+}
+
+const EMOTION_AXES = {
+  neutral: [0, 20, 50],
+  happy: [70, 65, 60],
+  sad: [-70, 30, 25],
+  angry: [-60, 90, 75],
+  excited: [45, 85, 65],
+  questioning: [0, 40, 45],
+  restrained_sadness: [-55, 35, 70],
+  restrained: [-20, 25, 75],
+};
+
+async function runConsistencyCheck() {
+  if (!state.book) {
+    elements.consistencyResults.textContent = "当前是单篇文本；导入多章节书籍后才能执行全书扫描。";
+    return;
+  }
+  saveCurrentChapter();
+  const analyzed = state.book.chapters.filter((chapter) => chapter.analysis);
+  if (analyzed.length < 2) {
+    elements.consistencyResults.textContent = "至少需要先分析两个章节。";
+    return;
+  }
+  setBusy(elements.consistencyButton, true, "扫描中…");
+  try {
+    const result = await requestJson("/api/consistency-check", {
+      method: "POST",
+      body: JSON.stringify({ chapters: analyzed }),
+    });
+    if (!result.issues.length) {
+      elements.consistencyResults.innerHTML =
+        `<div class="quality-ok">✓ 已检查 ${result.checked_chapters} 章、${result.checked_characters} 个角色，未发现特征漂移。</div>`;
+      return;
+    }
+    elements.consistencyResults.innerHTML = result.issues.map((issue) => `
+      <article class="quality-issue ${escapeAttribute(issue.severity)}">
+        <strong>${escapeHtml(issue.message)}</strong>
+        <span>${issue.variants.map((item) =>
+          `${escapeHtml(item.value)}${item.chapters.length ? `（${item.chapters.map(escapeHtml).join("、")}）` : ""}`
+        ).join(" ↔ ")}</span>
+      </article>`).join("");
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    setBusy(elements.consistencyButton, false, "扫描全书一致性");
+  }
+}
+
+async function applyRuleDirector() {
+  if (!state.analysis) return;
+  setBusy(elements.directorButton, true, "计算建议…");
+  try {
+    const result = await requestJson("/api/direct", {
+      method: "POST",
+      body: JSON.stringify({ segments: state.analysis.segments }),
+    });
+    const byId = new Map(result.directions.map((item) => [item.segment_id, item]));
+    for (const segment of state.analysis.segments) {
+      const direction = byId.get(segment.id);
+      if (!direction) continue;
+      segment.direction = direction;
+      segment.emotion = direction.emotion;
+      segment.emotion_axes = {
+        valence: direction.valence,
+        arousal: direction.arousal,
+        dominance: direction.dominance,
+      };
+    }
+    renderTimeline();
+    renderEmotionEditor();
+    scheduleDraftSave();
+    showMessage(`规则导演已为 ${result.directions.length} 个片段生成参数建议。`, true);
+  } catch (error) {
+    showMessage(error.message);
+  } finally {
+    setBusy(elements.directorButton, false, "应用规则导演");
+  }
+}
+
+function resetEmotionCurve() {
+  if (!state.analysis) return;
+  for (const segment of state.analysis.segments) {
+    const axes = EMOTION_AXES[segment.emotion] || EMOTION_AXES.neutral;
+    segment.emotion_axes = { valence: axes[0], arousal: axes[1], dominance: axes[2] };
+  }
+  renderEmotionEditor();
+  scheduleDraftSave();
+}
+
+function renderEmotionEditor() {
+  if (!state.analysis) return;
+  for (const segment of state.analysis.segments) {
+    if (!segment.emotion_axes) {
+      const axes = EMOTION_AXES[segment.emotion] || EMOTION_AXES.neutral;
+      segment.emotion_axes = { valence: axes[0], arousal: axes[1], dominance: axes[2] };
+    }
+  }
+  const shown = state.analysis.segments.slice(0, 30);
+  elements.emotionEditor.innerHTML = shown.map((segment, index) => `
+    <div class="emotion-row" data-index="${index}">
+      <span title="${escapeAttribute(segment.text)}">${index + 1}. ${escapeHtml(segment.text.slice(0, 18))}</span>
+      ${emotionSlider("valence", "效价", segment.emotion_axes.valence, -100, 100)}
+      ${emotionSlider("arousal", "唤醒", segment.emotion_axes.arousal, 0, 100)}
+      ${emotionSlider("dominance", "控制", segment.emotion_axes.dominance, 0, 100)}
+    </div>`).join("");
+  for (const input of elements.emotionEditor.querySelectorAll("input")) {
+    input.addEventListener("input", () => {
+      const index = Number(input.closest(".emotion-row").dataset.index);
+      state.analysis.segments[index].emotion_axes[input.dataset.axis] = Number(input.value);
+      input.nextElementSibling.textContent = input.value;
+      drawEmotionCurve();
+      scheduleDraftSave();
+    });
+  }
+  drawEmotionCurve();
+}
+
+function emotionSlider(axis, label, value, min, max) {
+  return `<label><small>${label}</small><input data-axis="${axis}" type="range" min="${min}" max="${max}" value="${value}"><output>${value}</output></label>`;
+}
+
+function drawEmotionCurve() {
+  const segments = state.analysis?.segments?.slice(0, 30) || [];
+  const colors = { valence: "#d65d45", arousal: "#d2a33b", dominance: "#427b75" };
+  const paths = Object.keys(colors).map((axis) => {
+    const points = segments.map((segment, index) => {
+      const raw = segment.emotion_axes[axis];
+      const normalized = axis === "valence" ? (raw + 100) / 200 : raw / 100;
+      const x = segments.length < 2 ? 20 : 20 + index * 860 / (segments.length - 1);
+      return `${x.toFixed(1)},${(190 - normalized * 160).toFixed(1)}`;
+    }).join(" ");
+    return `<polyline points="${points}" fill="none" stroke="${colors[axis]}" stroke-width="3"/>`;
+  }).join("");
+  elements.emotionCurve.innerHTML = `<path d="M20 30V190H880" fill="none" stroke="#d8d2c7"/>
+    ${paths}<g class="curve-legend"><text x="25" y="20">效价</text><text x="85" y="20">唤醒</text><text x="145" y="20">控制感</text></g>`;
+}
+
+function renderVoiceSamples() {
+  if (!state.analysis) return;
+  elements.voiceSamples.innerHTML = state.analysis.characters
+    .filter((character) => character.id !== "narrator")
+    .map((character) => `<label><strong>${escapeHtml(character.name)}</strong>
+      <input type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/x-m4a" data-character-id="${escapeAttribute(character.id)}">
+    </label>`).join("");
+}
+
+async function compareVoiceSamples() {
+  const inputs = [...elements.voiceSamples.querySelectorAll("input")].filter((input) => input.files[0]);
+  if (inputs.length < 2) {
+    showMessage("请至少为两个角色选择标准试听音频。");
+    return;
+  }
+  setBusy(elements.compareVoicesButton, true, "提取声学向量…");
+  try {
+    const context = new AudioContext();
+    const samples = [];
+    for (const input of inputs) {
+      const buffer = await context.decodeAudioData(await input.files[0].arrayBuffer());
+      samples.push({
+        id: input.dataset.characterId,
+        name: state.analysis.characters.find((item) => item.id === input.dataset.characterId).name,
+        vector: audioEmbedding(buffer),
+      });
+    }
+    await context.close();
+    const header = `<tr><th></th>${samples.map((item) => `<th>${escapeHtml(item.name)}</th>`).join("")}</tr>`;
+    const conflicts = [];
+    const rows = samples.map((left) => `<tr><th>${escapeHtml(left.name)}</th>${samples.map((right) => {
+      const score = cosineSimilarity(left.vector, right.vector);
+      if (score >= 0.82 && samples.indexOf(left) < samples.indexOf(right)) {
+        conflicts.push({ left, right, score });
+      }
+      return `<td class="${score >= 0.82 && left !== right ? "too-similar" : ""}">${score.toFixed(2)}</td>`;
+    }).join("")}</tr>`).join("");
+    elements.voiceSimilarityResults.innerHTML =
+      `<table class="similarity-matrix">${header}${rows}</table>
+      ${conflicts.length ? renderVoiceReplacementChoices(conflicts) : '<div class="quality-ok">✓ 没有超过 0.82 的角色声音组合。</div>'}
+      <small>标红表示相似度 ≥ 0.82。更换声音后，请重新生成并上传该角色的标准试听音频复测。该轻量声学向量用于预筛，正式制作建议复核试听。</small>`;
+    bindVoiceReplacementChoices();
+  } catch (error) {
+    showMessage(`音频分析失败：${error.message}`);
+  } finally {
+    setBusy(elements.compareVoicesButton, false, "生成相似度矩阵");
+  }
+}
+
+function renderVoiceReplacementChoices(conflicts) {
+  return `<section class="voice-replacement-panel">
+    <strong>发现 ${conflicts.length} 组声音过于相似，可直接更换：</strong>
+    ${conflicts.map((conflict, index) => {
+      const target = pickReplacementTarget(conflict.left.id, conflict.right.id);
+      return `<div class="voice-replacement-row" data-conflict-index="${index}">
+        <span><b>${escapeHtml(conflict.left.name)}</b> 与 <b>${escapeHtml(conflict.right.name)}</b>
+          <em>${conflict.score.toFixed(2)}</em></span>
+        <label>更换
+          <select class="replacement-character">
+            <option value="${escapeAttribute(conflict.left.id)}" ${target === conflict.left.id ? "selected" : ""}>${escapeHtml(conflict.left.name)}</option>
+            <option value="${escapeAttribute(conflict.right.id)}" ${target === conflict.right.id ? "selected" : ""}>${escapeHtml(conflict.right.name)}</option>
+          </select>
+        </label>
+        <label>新声音
+          <select class="replacement-voice"></select>
+        </label>
+        <button class="mini-button replacement-preview" type="button">▶ 试听候选</button>
+        <button class="secondary-button compact replacement-apply" type="button">应用更换</button>
+      </div>`;
+    }).join("")}
+  </section>`;
+}
+
+function pickReplacementTarget(leftId, rightId) {
+  const left = state.analysis.characters.find((item) => item.id === leftId);
+  const right = state.analysis.characters.find((item) => item.id === rightId);
+  if (left?.locked && !right?.locked) return rightId;
+  if (right?.locked && !left?.locked) return leftId;
+  return rightId;
+}
+
+function compatibleReplacementOptions(characterId) {
+  const character = state.analysis.characters.find((item) => item.id === characterId);
+  if (!character) return "";
+  const used = new Set(
+    state.analysis.characters
+      .filter((item) => item.id !== characterId)
+      .map((item) => item.voice_id),
+  );
+  const ranked = [...state.config.voices].sort((left, right) => {
+    const score = (voice) =>
+      (voice.gender === character.gender ? 4 : 0) +
+      (voice.age_group === character.age_group ? 6 : 0) -
+      (voice.id.startsWith("narrator") ? 3 : 0) -
+      (used.has(voice.id) ? 8 : 0);
+    return score(right) - score(left);
+  });
+  return ranked
+    .filter((voice) => voice.id !== character.voice_id)
+    .map((voice) => `<option value="${escapeAttribute(voice.id)}" ${used.has(voice.id) ? "disabled" : ""}>
+      ${escapeHtml(voice.label)} · ${escapeHtml(voice.description)}${used.has(voice.id) ? "（已使用）" : ""}
+    </option>`)
+    .join("");
+}
+
+function bindVoiceReplacementChoices() {
+  for (const row of elements.voiceSimilarityResults.querySelectorAll(".voice-replacement-row")) {
+    const characterSelect = row.querySelector(".replacement-character");
+    const voiceSelect = row.querySelector(".replacement-voice");
+    const refreshOptions = () => {
+      voiceSelect.innerHTML = compatibleReplacementOptions(characterSelect.value);
+    };
+    refreshOptions();
+    characterSelect.addEventListener("change", refreshOptions);
+    row.querySelector(".replacement-preview").addEventListener("click", () => {
+      previewReplacementVoice(characterSelect.value, voiceSelect.value);
+    });
+    row.querySelector(".replacement-apply").addEventListener("click", () => {
+      applyReplacementVoice(characterSelect.value, voiceSelect.value, row);
+    });
+  }
+}
+
+async function previewReplacementVoice(characterId, voiceId) {
+  const character = state.analysis.characters.find((item) => item.id === characterId);
+  if (!character || !voiceId) return;
+  const previousVoice = character.voice_id;
+  character.voice_id = voiceId;
+  try {
+    await previewCharacterVoice(characterId);
+  } finally {
+    character.voice_id = previousVoice;
+  }
+}
+
+function applyReplacementVoice(characterId, voiceId, row) {
+  const character = state.analysis.characters.find((item) => item.id === characterId);
+  const voice = state.config.voices.find((item) => item.id === voiceId);
+  if (!character || !voice) return;
+  character.voice_id = voiceId;
+  character.locked = true;
+  syncRegistryFromAnalysis();
+  if (state.book) {
+    for (const chapter of state.book.chapters) {
+      const profile = chapter.analysis?.characters?.find((item) => item.id === characterId);
+      if (profile) {
+        profile.voice_id = voiceId;
+        profile.locked = true;
+      }
+    }
+  }
+  scheduleDraftSave();
+  scheduleRenderPlan();
+  renderCharacters();
+  row.classList.add("replacement-applied");
+  row.innerHTML = `<span>✓ 已把 <b>${escapeHtml(character.name)}</b> 更换为
+    <b>${escapeHtml(voice.label)}</b>。请重新生成、上传试听音频并复测。</span>`;
+  showMessage(`已更换“${character.name}”的声音，并同步到全书角色表。`, true);
+}
+
+function audioEmbedding(buffer) {
+  const data = buffer.getChannelData(0);
+  let rawPeak = 0;
+  for (let i = 0; i < data.length; i++) {
+    rawPeak = Math.max(rawPeak, Math.abs(data[i]));
+  }
+  const threshold = rawPeak * 0.02;
+  let start = 0, end = data.length;
+  while (start < end && Math.abs(data[start]) < threshold) start++;
+  while (end > start && Math.abs(data[end - 1]) < threshold) end--;
+  const bins = new Array(32).fill(0);
+  let peak = 0;
+  for (let i = start; i < end; i++) peak = Math.max(peak, Math.abs(data[i]));
+  const stride = Math.max(1, Math.floor((end - start) / 8192));
+  let previous = 0, zcr = 0, energy = 0, count = 0;
+  for (let i = start; i < end; i += stride) {
+    const value = data[i] / (peak || 1);
+    energy += value * value;
+    if ((value >= 0) !== (previous >= 0)) zcr++;
+    bins[Math.min(31, Math.floor(Math.abs(value) * 32))]++;
+    previous = value; count++;
+  }
+  const vector = bins.map((value) => value / Math.max(1, count));
+  vector.push(Math.sqrt(energy / Math.max(1, count)), zcr / Math.max(1, count));
+  return vector;
+}
+
+function cosineSimilarity(left, right) {
+  const dot = left.reduce((sum, value, index) => sum + value * right[index], 0);
+  const a = Math.sqrt(left.reduce((sum, value) => sum + value * value, 0));
+  const b = Math.sqrt(right.reduce((sum, value) => sum + value * value, 0));
+  return dot / (a * b || 1);
 }
 
 function mergeCharacter(sourceId, targetId) {
@@ -1507,6 +1892,7 @@ function renderTimeline() {
           <button class="sentence-button wrong-speaker-button" type="button">角色错了</button>
           <button class="sentence-button pronunciation-button" type="button">这个字读错了</button>
           <button class="sentence-button segment-render-button" type="button">重做这句</button>
+          ${segment.direction ? `<span class="director-chip" title="${escapeAttribute(segment.direction.reasons.join("；"))}">导演：${segment.direction.pace}× · 能量 ${segment.direction.energy} · 停顿 ${segment.direction.pause_after_ms}ms</span>` : ""}
         </div>
       </div>
     `;
@@ -1857,6 +2243,18 @@ function setActiveSegment(index) {
 
 const NATURAL_FEMALE_VOICE_HINTS = [
   "google",
+  "ana",
+  "aria",
+  "ashley",
+  "cora",
+  "elizabeth",
+  "jane",
+  "jenny",
+  "libby",
+  "michelle",
+  "nancy",
+  "sara",
+  "sonia",
   "huihui",
   "meijia",
   "sinji",
@@ -1873,6 +2271,16 @@ const NATURAL_FEMALE_VOICE_HINTS = [
 ];
 const NATURAL_MALE_VOICE_HINTS = [
   "kangkang",
+  "christopher",
+  "davis",
+  "eric",
+  "guy",
+  "jacob",
+  "jason",
+  "roger",
+  "ryan",
+  "thomas",
+  "tony",
   "limu",
   "yunjian",
   "yunjie",
@@ -1933,10 +2341,21 @@ function browserVoiceGroup(voice) {
   return "unknown";
 }
 
-function browserVoiceScore(voice, targetGender) {
+function browserVoiceScore(voice, targetGender, targetLanguage = "zh") {
   const language = String(voice.lang || "").replace("_", "-").toLowerCase();
   const name = compactVoiceName(voice);
-  let score = language === "zh-cn" ? 60 : language.startsWith("zh") ? 35 : 0;
+  let score =
+    targetLanguage === "en"
+      ? language === "en-us"
+        ? 60
+        : language.startsWith("en")
+          ? 45
+          : 0
+      : language === "zh-cn"
+        ? 60
+        : language.startsWith("zh")
+          ? 35
+          : 0;
   const group = browserVoiceGroup(voice);
   if (group === "novelty") {
     score -= 120;
@@ -1964,13 +2383,18 @@ function stableVoiceHash(value) {
   );
 }
 
-function selectNaturalBrowserVoice(character, preset, voices) {
+function selectNaturalBrowserVoice(
+  character,
+  preset,
+  voices,
+  targetLanguage = "zh",
+) {
   if (!voices.length) return null;
   const targetGender = preset?.gender || character?.gender || "unknown";
   const ranked = voices
     .map((voice) => ({
       voice,
-      score: browserVoiceScore(voice, targetGender),
+      score: browserVoiceScore(voice, targetGender, targetLanguage),
     }))
     .sort(
       (left, right) =>
@@ -2147,9 +2571,6 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     state.config.voices.map((voice) => [voice.id, voice]),
   );
   const browserVoices = await waitForBrowserVoices();
-  const chineseVoices = browserVoices.filter((voice) =>
-    voice.lang.toLowerCase().startsWith("zh"),
-  );
   let index = Math.max(
     0,
     Math.min(startIndex, state.analysis.segments.length - 1),
@@ -2171,6 +2592,10 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     const segment = state.analysis.segments[segmentIndex];
     const character = characters.get(segment.speaker_id);
     const preset = voicePresets.get(character?.voice_id);
+    const targetLanguage = segment.language === "en" ? "en" : "zh";
+    const matchingVoices = browserVoices.filter((voice) =>
+      voice.lang.toLowerCase().startsWith(targetLanguage),
+    );
     const utterance = new SpeechSynthesisUtterance(
       applyPronunciationsToText(segment.text),
     );
@@ -2178,9 +2603,11 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     const selectedVoice = selectNaturalBrowserVoice(
       character,
       preset,
-      chineseVoices,
+      matchingVoices,
+      targetLanguage,
     );
-    utterance.lang = selectedVoice?.lang || "zh-CN";
+    utterance.lang =
+      selectedVoice?.lang || (targetLanguage === "en" ? "en-US" : "zh-CN");
     const baseRate = clampNumber(preset?.browser_rate || 1, 0.88, 1.08);
     utterance.rate = clampNumber(
       baseRate * previewPlaybackRate(),
@@ -2317,7 +2744,7 @@ function applyRenderPlan(plan) {
       : `<span><strong>约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}</strong> 预计费用</span>`;
   const note = isNeural
     ? remaining
-      ? `将使用更自然的免费 Neural 中文声线；已有 ${ready} 句可直接复用。`
+      ? `将使用更自然的免费 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线；已有 ${ready} 句可直接复用。`
       : "所有 Neural 句子都已经生成过，可直接复用并导出。"
     : isLocal
       ? remaining
@@ -2427,7 +2854,7 @@ async function renderSingleSegment(index) {
       result.cache_hits > 0
         ? "直接使用了已准备好的版本"
         : provider === "neural"
-          ? "使用免费 Neural 中文声线生成；下次生成全书时会直接复用"
+          ? `使用免费 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线生成；下次生成全书时会直接复用`
           : provider === "local"
             ? "使用 Mac 本地中文语音生成；下次生成全书时会直接复用"
             : "只生成了这一句；下次生成全书时会直接复用";
@@ -2476,7 +2903,7 @@ async function renderAudio(provider) {
     activeButton,
     true,
     provider === "neural"
-      ? "正在调用 Neural 中文声线…"
+      ? `正在调用 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线…`
       : provider === "dashscope"
         ? "正在加入后台任务…"
         : "正在调用 Mac 中文语音…",

@@ -12,7 +12,7 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 6
+NEURAL_VOICE_MAP_VERSION = 7
 
 # The free experience intentionally uses five tested roles instead of exposing
 # every available Edge voice. The narrator and adult roles keep their native
@@ -48,6 +48,22 @@ _PITCH_BY_PRESET = {
     "child_m": "+2Hz",
 }
 
+# English voices use the same stable preset IDs as the Chinese pack. This
+# means casting, locking, aliases, and cross-chapter persistence need no
+# separate code path; only the provider voice changes for a pure-English book.
+ENGLISH_NEURAL_VOICE_BY_PRESET: dict[str, str] = {
+    "narrator_f": "en-US-JennyNeural",
+    "adult_f_soft": "en-US-JaneNeural",
+    "adult_m_calm": "en-US-DavisNeural",
+    "child_f": "en-US-AnaNeural",
+    "child_m": "en-US-JacobNeural",
+}
+
+_ENGLISH_FALLBACK_BY_GENDER = {
+    "female": "en-US-JennyNeural",
+    "male": "en-US-GuyNeural",
+}
+
 
 def neural_voice_pack_is_available() -> bool:
     """Return whether both optional runtime packages are installed."""
@@ -58,7 +74,15 @@ def neural_voice_pack_is_available() -> bool:
     )
 
 
-def select_neural_voice(preset: VoicePreset) -> str:
+def select_neural_voice(preset: VoicePreset, language: str = "zh") -> str:
+    if language == "en":
+        return ENGLISH_NEURAL_VOICE_BY_PRESET.get(
+            preset.id,
+            _ENGLISH_FALLBACK_BY_GENDER.get(
+                preset.gender,
+                "en-US-JennyNeural",
+            ),
+        )
     return NEURAL_VOICE_BY_PRESET.get(
         preset.id,
         _FALLBACK_BY_GENDER.get(
@@ -128,7 +152,7 @@ def _decode_mp3_to_wav(source: Path, target: Path) -> None:
 
 
 class NeuralVoicePackProvider(TTSProvider):
-    """Generate high-quality Mandarin speech through the free Edge service."""
+    """Generate Mandarin or English speech through the free Edge service."""
 
     name = "neural"
 
@@ -167,7 +191,8 @@ class NeuralVoicePackProvider(TTSProvider):
         voice: VoicePreset,
         output_path: Path,
     ) -> dict[str, object]:
-        voice_name = select_neural_voice(voice)
+        language = "en" if segment.language == "en" else "zh"
+        voice_name = select_neural_voice(voice, language)
         rate = neural_rate(voice)
         pitch = neural_pitch(voice)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,5 +232,10 @@ class NeuralVoicePackProvider(TTSProvider):
             "rate": rate,
             "pitch": pitch,
             "characters": len(segment.text),
-            "note": "免 Key 在线 Neural 中文声线（实验）",
+            "language": language,
+            "note": (
+                "免 Key 在线 Neural 英文声线（实验）"
+                if language == "en"
+                else "免 Key 在线 Neural 中文声线（实验）"
+            ),
         }

@@ -14,7 +14,10 @@ from . import __version__
 from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
 from .epub import parse_epub
+from .document_import import parse_document
+from .directing import consistency_check, direct_text
 from .jobs import RenderJobManager, RenderJobNotFoundError
+from .language import detect_text_language
 from .models import AnalysisResult
 from .providers import (
     DashScopeTTSProvider,
@@ -40,6 +43,7 @@ CACHE_ROOT = Path(
 ).resolve()
 MAX_REQUEST_BYTES = int(os.getenv("APP_MAX_REQUEST_BYTES", "2000000"))
 MAX_EPUB_BYTES = int(os.getenv("APP_MAX_EPUB_BYTES", "20000000"))
+MAX_DOCUMENT_BYTES = int(os.getenv("APP_MAX_DOCUMENT_BYTES", "20000000"))
 MAX_ANALYZE_CHARACTERS = int(os.getenv("APP_MAX_ANALYZE_CHARACTERS", "50000"))
 MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
 MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
@@ -175,12 +179,15 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         },
                         "neural": {
                             "ready": neural_tts_ready,
-                            "label": "免费 Neural 中文声线（联网）",
+                            "label": "免费 Neural 中英文声线（联网）",
                             "detail": (
-                                "五类精选中文角色声线，可试听、播放和导出"
+                                "五类精选角色声线；纯英文自动切换英文 Neural，"
+                                "中文及混合内容保持中文声线"
                                 if neural_tts_ready
                                 else "安装 edge-tts 与 miniaudio 后启用"
                             ),
+                            "supported_languages": ["zh", "en"],
+                            "english_auto_detect": True,
                             "experimental": True,
                             "install_command": (
                                 "python3 -m pip install edge-tts miniaudio"
@@ -216,6 +223,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     "limits": {
                         "analyze_characters": MAX_ANALYZE_CHARACTERS,
                         "epub_bytes": MAX_EPUB_BYTES,
+                        "document_bytes": MAX_DOCUMENT_BYTES,
                         "primary_characters": MAX_PRIMARY_CHARACTERS,
                         "render_characters": MAX_RENDER_CHARACTERS,
                         "render_segments": MAX_RENDER_SEGMENTS,
@@ -223,6 +231,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                     "imports": {
                         "txt": True,
                         "epub": True,
+                        "pdf": True,
+                        "docx": True,
                         "voxcast_project": True,
                     },
                     "features": {
@@ -236,6 +246,10 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "refresh_job_recovery": True,
                         "neural_character_preview": True,
                         "voice_access_tiers": True,
+                        "consistency_check": True,
+                        "rule_director": True,
+                        "emotion_curve": True,
+                        "voice_similarity": True,
                     },
                 }
             )
@@ -276,6 +290,14 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._handle_import_epub(raw, source_name)
                 return
+            if path == "/api/import/document":
+                raw = self._read_body(MAX_DOCUMENT_BYTES)
+                source_name = unquote(
+                    self.headers.get("X-VoxCast-Filename", "document.docx")
+                )
+                project = parse_document(raw, source_name)
+                self._send_json(project.to_dict(), HTTPStatus.CREATED)
+                return
 
             payload = self._read_json()
             if path == "/api/analyze":
@@ -290,6 +312,28 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 self._handle_render_job_action(path, payload)
             elif path == "/api/render":
                 self._handle_render(payload)
+            elif path == "/api/consistency-check":
+                chapters = payload.get("chapters", [])
+                if not isinstance(chapters, list):
+                    raise ValueError("章节格式错误")
+                self._send_json(consistency_check(chapters))
+            elif path == "/api/direct":
+                segments = payload.get("segments", [])
+                if not isinstance(segments, list):
+                    raise ValueError("片段格式错误")
+                self._send_json({
+                    "directions": [
+                        {
+                            "segment_id": str(segment.get("id", index)),
+                            **direct_text(
+                                str(segment.get("text", "")),
+                                str(segment.get("kind", "dialogue")),
+                            ),
+                        }
+                        for index, segment in enumerate(segments)
+                        if isinstance(segment, dict)
+                    ]
+                })
             else:
                 self._send_json(
                     {"error": "not_found", "message": "接口不存在"},
@@ -344,7 +388,11 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             default_limit=MAX_PRIMARY_CHARACTERS,
         )
         registry.reconcile(analysis)
+        detected_language = detect_text_language(text)
+        for segment in analysis.segments:
+            segment.language = detected_language
         response = analysis.to_dict()
+        response["detected_language"] = detected_language
         response["character_registry"] = registry.to_dict()
         self._send_json(response)
 
@@ -378,8 +426,9 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             )
         elif provider_name == "neural":
             plan["note"] = (
-                "使用免 Key 的在线 Neural 中文声线；不会产生 API 费用，"
-                "但需要联网，服务可用性不作保证。"
+                "使用免 Key 的在线 Neural 中英文声线；纯英文自动切换英文，"
+                "中文及混合内容保持中文。不会产生 API 费用，但需要联网，"
+                "服务可用性不作保证。"
             )
         elif provider_name == "local":
             plan["note"] = (

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from audiobook_app.models import CharacterProfile, ScriptSegment
 from audiobook_app.providers.neural import (
+    ENGLISH_NEURAL_VOICE_BY_PRESET,
     NEURAL_VOICE_BY_PRESET,
     NeuralVoicePackProvider,
     neural_pitch,
@@ -80,6 +81,20 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
         self.assertEqual(neural_rate(adult_man), "-1%")
         self.assertEqual(neural_pitch(adult_man), "+0Hz")
 
+    def test_english_pack_reuses_stable_character_presets(self) -> None:
+        self.assertEqual(
+            set(ENGLISH_NEURAL_VOICE_BY_PRESET),
+            set(NEURAL_VOICE_BY_PRESET),
+        )
+        self.assertEqual(
+            select_neural_voice(VOICE_BY_ID["narrator_f"], "en"),
+            "en-US-JennyNeural",
+        )
+        self.assertEqual(
+            select_neural_voice(VOICE_BY_ID["child_f"], "en"),
+            "en-US-AnaNeural",
+        )
+
     def test_provider_converts_downloaded_mp3_to_valid_wav(self) -> None:
         calls: list[tuple[str, str, str, str]] = []
 
@@ -144,6 +159,54 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             self.assertEqual(metadata["provider"], "neural")
             self.assertEqual(metadata["character"], "小女孩")
             self.assertFalse(list(Path(directory).glob("*.edge.mp3")))
+
+    def test_pure_english_segment_uses_english_voice(self) -> None:
+        calls: list[str] = []
+
+        def save_mp3(
+            text: str,
+            voice_name: str,
+            rate: str,
+            pitch: str,
+            output_path: Path,
+        ) -> None:
+            del text, rate, pitch
+            calls.append(voice_name)
+            output_path.write_bytes(b"ID3" + b"\x00" * 200)
+
+        def decode_mp3(source: Path, target: Path) -> None:
+            del source
+            with wave.open(str(target), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(24_000)
+                audio.writeframes(b"\x00\x00" * 240)
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = NeuralVoicePackProvider(
+                save_mp3=save_mp3,
+                decode_mp3=decode_mp3,
+            )
+            metadata = provider.synthesize(
+                ScriptSegment(
+                    id="english",
+                    kind="narration",
+                    text="The train arrived at midnight.",
+                    speaker_id="narrator",
+                    language="en",
+                ),
+                CharacterProfile(
+                    id="narrator",
+                    name="旁白",
+                    gender="female",
+                    voice_id="narrator_f",
+                ),
+                VOICE_BY_ID["narrator_f"],
+                Path(directory) / "english.wav",
+            )
+
+        self.assertEqual(calls, ["en-US-JennyNeural"])
+        self.assertEqual(metadata["language"], "en")
 
 
 if __name__ == "__main__":
