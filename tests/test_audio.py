@@ -10,9 +10,11 @@ from audiobook_app.audio import (
     concatenate_wavs,
     mp3_is_available,
     render_audiobook,
+    segment_cache_key,
 )
 from audiobook_app.models import AnalysisResult, CharacterProfile, ScriptSegment
 from audiobook_app.providers.demo import DemoToneProvider
+from audiobook_app.voices import VOICE_BY_ID
 
 
 def make_silent_wav(path: Path, duration_seconds: float, sample_rate: int = 24000):
@@ -24,6 +26,26 @@ def make_silent_wav(path: Path, duration_seconds: float, sample_rate: int = 2400
 
 
 class AudioPipelineTests(unittest.TestCase):
+    def test_cache_key_separates_language_routes(self) -> None:
+        provider = DemoToneProvider()
+        common = {
+            "id": "segment",
+            "kind": "narration",
+            "text": "The train is waiting.",
+            "speaker_id": "narrator",
+        }
+        english = ScriptSegment(**common, language="en")
+        chinese_route = ScriptSegment(**common, language="zh")
+
+        self.assertNotEqual(
+            segment_cache_key(provider, english, VOICE_BY_ID["narrator_f"]),
+            segment_cache_key(
+                provider,
+                chinese_route,
+                VOICE_BY_ID["narrator_f"],
+            ),
+        )
+
     def test_pronunciations_prefer_longest_match_without_cascading(self) -> None:
         result = apply_pronunciations(
             "单雄信和单老师",

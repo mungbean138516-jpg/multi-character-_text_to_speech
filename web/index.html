@@ -62,17 +62,17 @@
               <span class="section-number">01</span>
             <div>
               <h2>把你想听的小说放进来</h2>
-              <p>粘贴文字，或导入 TXT / EPUB；请只上传自有、获授权或公版内容。</p>
+              <p>粘贴文字，或导入 TXT / EPUB / PDF / Word；请只上传自有、获授权或公版内容。</p>
             </div>
           </div>
           <div class="input-source-actions">
             <button id="importFileButton" class="secondary-button compact" type="button">
-              导入 TXT / EPUB
+              导入文档
             </button>
             <input
               id="fileInput"
               type="file"
-              accept=".txt,.epub,text/plain,application/epub+zip"
+              accept=".txt,.epub,.pdf,.docx,text/plain,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               hidden
             />
             <button id="loadDemoButton" class="text-button" type="button">
@@ -109,7 +109,7 @@
           placeholder="把你有权使用的小说文本粘贴或拖入这里……"
         ></textarea>
         <div class="source-meta">
-          <span id="fileMeta">支持 UTF-8、UTF-16 与 GB18030 编码的 TXT</span>
+          <span id="fileMeta">支持 TXT、EPUB、可提取文字的 PDF 与 DOCX</span>
           <span id="draftStatus" class="draft-status">本机草稿尚未保存</span>
           <button id="clearDraftButton" class="text-button subtle" type="button">
             删除保存副本
@@ -168,7 +168,53 @@
         </div>
 
         <div id="warningList" class="warning-list" hidden></div>
+        <div class="voice-plan-strip">
+          <div>
+            <strong>免费版 · 5 类精选 Neural 声线</strong>
+            <span>旁白、小女孩、小男孩、成年女性、成年男性，先把常用角色做好听。</span>
+          </div>
+          <span class="premium-voice-pill">🔒 老人、方言与定制声线 · 高级版</span>
+        </div>
         <div id="characterGrid" class="character-grid"></div>
+
+        <section class="intelligence-panel">
+          <div class="tool-heading">
+            <div>
+              <strong>全书质量控制</strong>
+              <span>规则在本机运行；不会消耗大模型额度。</span>
+            </div>
+            <div class="tool-actions">
+              <button id="consistencyButton" class="secondary-button compact" type="button">扫描全书一致性</button>
+              <button id="directorButton" class="secondary-button compact" type="button">应用规则导演</button>
+            </div>
+          </div>
+          <div id="consistencyResults" class="quality-results">分析过多个章节后，可检查角色年龄、性别、声音和特征漂移。</div>
+        </section>
+
+        <section class="intelligence-panel">
+          <div class="tool-heading">
+            <div>
+              <strong>三维情绪曲线</strong>
+              <span>效价（负面↔正面）、唤醒（平静↔激动）、控制感（脆弱↔强势）可批量编辑。</span>
+            </div>
+            <button id="resetEmotionButton" class="text-button subtle" type="button">按语气重置</button>
+          </div>
+          <svg id="emotionCurve" class="emotion-curve" viewBox="0 0 900 210" role="img" aria-label="三维情绪曲线"></svg>
+          <div id="emotionEditor" class="emotion-editor"></div>
+        </section>
+
+        <section class="intelligence-panel">
+          <div class="tool-heading">
+            <div>
+              <strong>角色声音相似度</strong>
+              <span>让每个角色朗读同一句标准文本并上传音频；本机裁剪静音、归一化并提取声学向量。</span>
+            </div>
+            <button id="compareVoicesButton" class="secondary-button compact" type="button">生成相似度矩阵</button>
+          </div>
+          <p class="standard-phrase">标准试听句：这是一次角色声音一致性测试，请忽略句子的具体内容。</p>
+          <div id="voiceSamples" class="voice-samples"></div>
+          <div id="voiceSimilarityResults" class="quality-results">至少为两个角色选择 WAV、MP3 或 M4A 试听音频。</div>
+        </section>
 
         <section id="pronunciationPanel" class="pronunciation-panel">
           <div class="pronunciation-heading">
@@ -203,7 +249,7 @@
               <span class="section-number">03</span>
               <div>
                 <h2>检查朗读脚本</h2>
-                <p>发现串台或错音时，直接在对应句子上纠正。</p>
+                <p>试听与最终生成使用同一套声音；发现串台或错音时，直接在对应句子上纠正。</p>
               </div>
             </div>
             <div class="preview-actions">
@@ -217,7 +263,7 @@
                 </select>
               </label>
               <button id="playButton" class="secondary-button" type="button">
-                ▶ 从头试听
+                ▶ Neural 连续试听
               </button>
               <button id="stopButton" class="icon-button" type="button" title="停止试听">
                 ■
@@ -230,13 +276,13 @@
           <div id="nowPlaying" class="now-playing" aria-live="polite">
             <span class="now-playing-dot"></span>
             <b>尚未开始播放</b>
-            <small>点击任意一句的“从这里听”也可以开始</small>
+            <small>点击任意一句的“从这里听 Neural”也可以开始</small>
           </div>
           <section id="characterChatPanel" class="character-chat" hidden>
             <div class="character-chat-heading">
               <div>
                 <strong>和角色聊聊</strong>
-                <span>回复参考已导入的全文，并用该角色的试听声线读出。</span>
+                <span>回复参考已导入的全文，并用该角色的试听声线读出；启用后会把角色上下文与提问发送至已配置的千问服务。</span>
               </div>
               <label class="inline-field">
                 <span>正在对话</span>
@@ -261,7 +307,7 @@
             <div>
               <h2>生成多人有声书</h2>
               <p>
-                确认角色和声音后开始生成。以后只改一句，也只需重新生成那一句。
+                使用上面试听过的同一套免费 Neural 声音生成。以后只改一句，也只需重新生成那一句。
               </p>
               <div id="providerNotice" class="provider-notice"></div>
             </div>
@@ -273,7 +319,7 @@
               type="button"
               hidden
             >
-              <span>免费高质量生成</span><b>✦</b>
+              <span>用这 5 类声音生成</span><b>✦</b>
             </button>
             <button
               id="localRenderButton"
@@ -281,10 +327,10 @@
               type="button"
               hidden
             >
-              <span>免费生成（Mac）</span><b>⌘</b>
+              <span>备用：Mac 本地声音</span><b>⌘</b>
             </button>
             <button id="dashscopeRenderButton" class="primary-button wide" type="button">
-              <span>开始生成</span><b>✦</b>
+              <span>🔒 高级声线（未开通）</span><b>✦</b>
             </button>
           </div>
           <div id="renderPlan" class="render-plan">
@@ -354,7 +400,7 @@
               <button id="refreshPlanButton" class="text-button subtle" type="button">
                 重新计算
               </button>
-              <p>Neural、Mac 本地模式与 CosyVoice 都会生成真实朗读；免费 Neural 模式需要联网。</p>
+              <p>主按钮与上方试听共用同一套 5 类免费 Neural 声线和缓存；Mac 本地声音仅作为断网备用。</p>
             </div>
           </details>
           <div id="audioResult" class="audio-result" hidden>
@@ -385,7 +431,7 @@
     </main>
 
     <footer>
-      <span>声场 VoxCast · Alpha 0.6</span>
+      <span>声场 VoxCast · Alpha 0.9</span>
       <span>AI 自动选角，你随时可以纠正。</span>
     </footer>
 

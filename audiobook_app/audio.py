@@ -165,6 +165,7 @@ def segment_cache_key(
         "provider": provider.cache_identity(),
         "text": segment.text,
         "emotion": segment.emotion,
+        "language": segment.language,
         "voice": {
             "id": voice.id,
             "provider_voice": voice.provider_voice,

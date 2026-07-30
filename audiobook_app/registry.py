@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import AnalysisResult, CharacterProfile
+from .voices import cast_characters
 
 
 NARRATOR_ID = "narrator"
@@ -77,7 +78,7 @@ class CharacterRegistry:
                     gender="neutral",
                     age_group="adult",
                     traits=["次要人物合用"],
-                    voice_id="adult_m_bright",
+                    voice_id="adult_m_calm",
                     confidence=0.5,
                     locked=True,
                 )
@@ -147,6 +148,9 @@ class CharacterRegistry:
                 characters.append(CharacterProfile.from_dict(item))
             except (KeyError, TypeError, ValueError):
                 continue
+        # Migrate pre-0.9 automatic premium assignments when an old project is
+        # reopened. cast_characters preserves any voice the user locked.
+        cast_characters(characters)
         return cls(
             characters=characters,
             dialogue_counts={
@@ -330,7 +334,7 @@ class CharacterRegistry:
             gender="neutral",
             age_group="adult",
             traits=["次要人物合用"],
-            voice_id="adult_m_bright",
+            voice_id="adult_m_calm",
             confidence=0.5,
             evidence=["超过本书主要角色上限后自动归类"],
             locked=True,

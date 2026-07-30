@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
+from audiobook_app import __version__
 import audiobook_app.server as app_server
 from tests.test_epub import make_epub
 
@@ -76,6 +77,10 @@ class ServerIntegrationTests(unittest.TestCase):
     def get_json(cls, path: str) -> dict:
         with urllib.request.urlopen(cls.base_url + path) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def test_health_reports_package_version(self) -> None:
+        health = self.get_json("/api/health")
+        self.assertEqual(health, {"status": "ok", "version": __version__})
 
     def test_analyze_render_download_and_cached_plan(self) -> None:
         analysis = self.post(
@@ -258,6 +263,40 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertIn(
             "edge-tts",
             config["providers"]["neural"]["install_command"],
+        )
+        self.assertEqual(config["voice_access"]["free_role_count"], 5)
+        self.assertEqual(
+            len(config["voice_access"]["free_voice_ids"]),
+            5,
+        )
+        self.assertTrue(config["features"]["neural_character_preview"])
+        self.assertEqual(
+            sum(voice["access"] == "free" for voice in config["voices"]),
+            5,
+        )
+        self.assertEqual(
+            config["providers"]["neural"]["supported_languages"],
+            ["zh", "en"],
+        )
+
+    def test_pure_english_analysis_marks_every_segment_for_english(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {
+                "mode": "local",
+                "text": (
+                    "The rain stopped before midnight. "
+                    '"We should leave now," Alice said. '
+                    "The last train was waiting."
+                ),
+            },
+        )
+
+        self.assertEqual(analysis["detected_language"], "en")
+        self.assertTrue(analysis["segments"])
+        self.assertEqual(
+            {segment["language"] for segment in analysis["segments"]},
+            {"en"},
         )
 
     def test_character_chat_returns_the_selected_character_reply(self) -> None:

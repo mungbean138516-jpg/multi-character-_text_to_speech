@@ -3,6 +3,8 @@ import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 
+from audiobook_app.analyzer import HeuristicNovelAnalyzer
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -52,7 +54,7 @@ class WebContractTests(unittest.TestCase):
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         self.assertIn("自动识别角色", html)
-        self.assertIn("开始生成", html)
+        self.assertIn("用这 5 类声音生成", html)
         self.assertIn("这个字读错了", javascript)
         self.assertIn("重做这句", javascript)
         self.assertIn("高级设置", html)
@@ -65,10 +67,72 @@ class WebContractTests(unittest.TestCase):
         self.assertNotIn('id="demoRenderButton"', html)
         self.assertIn("selectNaturalBrowserVoice", javascript)
         self.assertIn("NOVELTY_VOICE_HINTS", javascript)
+        self.assertIn('segment.language === "en"', javascript)
+        self.assertIn('"en-US" : "zh-CN"', javascript)
         self.assertIn("HIGH_QUALITY_BROWSER_VOICE_HINTS", javascript)
         self.assertIn('renderAudio("neural")', javascript)
+        self.assertIn("provider: previewState.provider", javascript)
+        self.assertIn('requestJson("/api/render/segment"', javascript)
+        self.assertIn("▶ Neural 试听", javascript)
         self.assertIn("previewInstalledLocalVoice", javascript)
         self.assertIn("local_voices", javascript)
+
+    def test_free_and_premium_voice_tiers_are_clear(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("免费版 · 5 类精选 Neural 声线", html)
+        self.assertIn("老人、方言与定制声线 · 高级版", html)
+        self.assertIn("免费精选 · 5 类自然角色声线", javascript)
+        self.assertIn("高级声线 · 付费服务", javascript)
+        self.assertIn("付费服务已连接", javascript)
+        self.assertIn("data-preview-locked", javascript)
+        self.assertIn("window.confirm", javascript)
+        self.assertIn("stopAllPreviews", javascript)
+        self.assertIn("migrateAutomaticPremiumVoice", javascript)
+        self.assertIn('voice.access === "premium"', javascript)
+
+    def test_builtin_demo_uses_exactly_the_five_free_role_classes(self) -> None:
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"const DEMO_TEXT = `(.*?)`;",
+            javascript,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        demo = match.group(1)
+        self.assertNotIn("老奶奶", demo)
+        self.assertNotIn("老爷爷", demo)
+        self.assertIn("小女孩", demo)
+        self.assertIn("小男孩", demo)
+
+        result = HeuristicNovelAnalyzer().analyze(demo)
+        self.assertEqual(
+            {character.voice_id for character in result.characters},
+            {
+                "narrator_f",
+                "adult_f_soft",
+                "adult_m_calm",
+                "child_f",
+                "child_m",
+            },
+        )
+        self.assertIn("migrateLegacyBuiltInDemo", javascript)
+        self.assertIn("LEGACY_BUILT_IN_DEMO_RE", javascript)
+
+    def test_script_preview_prefers_neural_and_reuses_final_cache(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("▶ Neural 连续试听", html)
+        self.assertIn("从这里听 Neural", html)
+        self.assertIn("用这 5 类声音生成", html)
+        self.assertIn("startScriptPreview(0)", javascript)
+        self.assertIn("startNeuralScriptPreview", javascript)
+        self.assertIn('provider: "neural"', javascript)
+        self.assertIn("scriptPreviewAudio", javascript)
+        self.assertIn("已经试听过的句子会在最终生成时直接复用", javascript)
+        self.assertIn("startBrowserPreview", javascript)
 
     def test_book_project_controls_and_storage_contract_are_present(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -94,6 +158,13 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("render_job_ids", javascript)
         self.assertIn("restoreRenderJobForCurrentContext", javascript)
 
+    def test_voice_similarity_offers_actionable_replacement(self) -> None:
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("renderVoiceReplacementChoices", javascript)
+        self.assertIn("replacement-preview", javascript)
+        self.assertIn("replacement-apply", javascript)
+        self.assertIn("applyReplacementVoice", javascript)
+
     def test_character_chat_uses_book_context_and_character_voice(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
@@ -102,7 +173,7 @@ class WebContractTests(unittest.TestCase):
         self.assertIn('requestJson("/api/character-chat"', javascript)
         self.assertIn("function chatContextText()", javascript)
         self.assertIn("function speakCharacterReply", javascript)
-        self.assertIn("function startNeuralPreview", javascript)
+        self.assertIn("function playCharacterChatAudio", javascript)
         self.assertIn('requestJson("/api/preview/neural"', javascript)
         self.assertIn("chat_messages", javascript)
 

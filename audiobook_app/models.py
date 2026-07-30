@@ -7,6 +7,7 @@ from typing import Any
 VALID_GENDERS = {"female", "male", "neutral", "unknown"}
 VALID_AGE_GROUPS = {"child", "teen", "adult", "elder", "unknown"}
 VALID_SEGMENT_KINDS = {"narration", "dialogue"}
+VALID_LANGUAGES = {"auto", "zh", "en"}
 
 
 @dataclass
@@ -67,6 +68,7 @@ class ScriptSegment:
     source_start: int = 0
     source_end: int = 0
     locked: bool = False
+    language: str = "auto"
 
     def __post_init__(self) -> None:
         if self.kind not in VALID_SEGMENT_KINDS:
@@ -74,6 +76,8 @@ class ScriptSegment:
         self.text = self.text.strip()
         self.confidence = max(0.0, min(1.0, float(self.confidence)))
         self.locked = bool(self.locked)
+        if self.language not in VALID_LANGUAGES:
+            self.language = "auto"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -90,6 +94,7 @@ class ScriptSegment:
             source_start=int(value.get("source_start", 0)),
             source_end=int(value.get("source_end", 0)),
             locked=bool(value.get("locked", False)),
+            language=str(value.get("language", "auto")),
         )
 
 

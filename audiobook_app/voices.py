@@ -28,11 +28,11 @@ class VoicePreset:
 VOICE_CATALOG: tuple[VoicePreset, ...] = (
     VoicePreset(
         "narrator_f",
-        "旁白 · 龙妙",
+        "旁白 · 清晰女声",
         "longmiao_v3",
         "female",
         "adult",
-        "有节奏、适合长篇叙事",
+        "自然清晰，适合长篇叙事",
         1.0,
         0.96,
         205,
@@ -72,12 +72,12 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
     ),
     VoicePreset(
         "adult_f_soft",
-        "成年女 · 龙婉君",
+        "成年女 · 温柔女声",
         "longwanjun_v3",
         "female",
         "adult",
-        "细腻、轻柔",
-        1.04,
+        "细腻、自然、不夸张",
+        0.98,
         0.98,
         235,
     ),
@@ -105,14 +105,14 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
     ),
     VoicePreset(
         "adult_m_calm",
-        "成年男 · 龙天",
+        "成年男 · 清亮男声",
         "longtian_v3",
         "male",
         "adult",
-        "磁性、理性",
-        0.96,
-        0.95,
-        130,
+        "清脆、自然、适合对白",
+        0.99,
+        1.0,
+        158,
     ),
     VoicePreset(
         "adult_m_wise",
@@ -248,22 +248,22 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
     ),
     VoicePreset(
         "child_f",
-        "女孩 · 龙呼呼",
+        "小女孩 · 活泼童声",
         "longhuhu_v3",
         "female",
         "child",
-        "天真、活泼",
+        "天真、活泼、清亮",
         1.09,
         1.04,
         325,
     ),
     VoicePreset(
         "child_m",
-        "男孩 · 龙杰力豆",
+        "小男孩 · 童真男声",
         "longjielidou_v3",
         "male",
         "child",
-        "阳光、调皮",
+        "稚嫩、清楚、轻快",
         1.06,
         1.03,
         285,
@@ -294,9 +294,33 @@ VOICE_CATALOG: tuple[VoicePreset, ...] = (
 
 VOICE_BY_ID = {voice.id: voice for voice in VOICE_CATALOG}
 
+# The free product intentionally keeps only five strong, distinct roles.
+# Other catalogue entries remain available to paid providers such as
+# CosyVoice, but are not auto-cast or selectable in the free UI.
+FREE_VOICE_IDS = frozenset(
+    {
+        "narrator_f",
+        "adult_f_soft",
+        "adult_m_calm",
+        "child_f",
+        "child_m",
+    }
+)
+FREE_VOICE_CATALOG = tuple(
+    voice for voice in VOICE_CATALOG if voice.id in FREE_VOICE_IDS
+)
+
 
 def catalog_as_dicts() -> list[dict[str, object]]:
-    return [voice.to_dict() for voice in VOICE_CATALOG]
+    catalog: list[dict[str, object]] = []
+    for voice in VOICE_CATALOG:
+        item = voice.to_dict()
+        item["access"] = "free" if voice.id in FREE_VOICE_IDS else "premium"
+        item["preview_provider"] = (
+            "neural" if voice.id in FREE_VOICE_IDS else "dashscope"
+        )
+        catalog.append(item)
+    return catalog
 
 
 def _rank_voice(character: CharacterProfile, voice: VoicePreset) -> int:
@@ -307,6 +331,13 @@ def _rank_voice(character: CharacterProfile, voice: VoicePreset) -> int:
         score += 1
     if character.age_group == voice.age_group:
         score += 7
+    elif (
+        character.age_group in {"teen", "elder"}
+        and voice.age_group == "adult"
+    ):
+        # The free tier deliberately avoids fake teen/elder timbres made with
+        # pitch shifting. A natural adult voice is the safer fallback.
+        score += 4
     elif character.age_group == "unknown" and voice.age_group == "adult":
         score += 2
     if character.name == "旁白" and voice.id.startswith("narrator"):
@@ -319,11 +350,17 @@ def _rank_voice(character: CharacterProfile, voice: VoicePreset) -> int:
 def cast_characters(characters: list[CharacterProfile]) -> list[CharacterProfile]:
     used: set[str] = set()
     for character in characters:
-        if character.voice_id in VOICE_BY_ID:
+        if character.voice_id in FREE_VOICE_IDS or (
+            character.locked and character.voice_id in VOICE_BY_ID
+        ):
             used.add(character.voice_id)
             continue
+        # Unlocked projects created before 0.9 may still carry one of the
+        # larger premium catalogue IDs. Move those automatic choices onto the
+        # curated free pack, while preserving voices the user explicitly
+        # locked.
         ranked = sorted(
-            VOICE_CATALOG,
+            FREE_VOICE_CATALOG,
             key=lambda voice: (
                 _rank_voice(character, voice),
                 voice.id not in used,
