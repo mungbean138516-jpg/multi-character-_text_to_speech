@@ -16,10 +16,11 @@ from audiobook_app.voices import VOICE_BY_ID
 
 
 class NeuralVoicePackProviderTests(unittest.TestCase):
-    def test_auto_cast_uses_nine_non_dialect_neural_voices(self) -> None:
+    def test_free_pack_uses_five_curated_non_dialect_role_mappings(self) -> None:
         voices = set(NEURAL_VOICE_BY_PRESET.values())
 
-        self.assertEqual(len(voices), 9)
+        self.assertEqual(len(NEURAL_VOICE_BY_PRESET), 5)
+        self.assertEqual(len(voices), 4)
         self.assertFalse(
             any(
                 marker in voice
@@ -28,22 +29,29 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             )
         )
 
-    def test_age_specific_voices_do_not_use_extreme_pitch(self) -> None:
-        child = VOICE_BY_ID["child_m"]
+    def test_child_roles_use_distinct_tuning_and_elder_stays_natural(self) -> None:
+        girl = VOICE_BY_ID["child_f"]
+        boy = VOICE_BY_ID["child_m"]
         elder = VOICE_BY_ID["elder_m"]
 
         self.assertEqual(
-            select_neural_voice(child),
+            select_neural_voice(girl),
+            "zh-CN-XiaoyiNeural",
+        )
+        self.assertEqual(
+            select_neural_voice(boy),
             "zh-CN-YunxiaNeural",
         )
         self.assertEqual(
             select_neural_voice(elder),
-            "zh-TW-YunJheNeural",
+            "zh-CN-YunyangNeural",
         )
-        self.assertEqual(neural_pitch(child), "+2Hz")
-        self.assertEqual(neural_pitch(elder), "-2Hz")
-        self.assertEqual(neural_rate(child), "+4%")
-        self.assertEqual(neural_rate(elder), "-6%")
+        self.assertEqual(neural_pitch(girl), "+8Hz")
+        self.assertEqual(neural_pitch(boy), "+2Hz")
+        self.assertEqual(neural_pitch(elder), "+0Hz")
+        self.assertEqual(neural_rate(girl), "+6%")
+        self.assertEqual(neural_rate(boy), "+4%")
+        self.assertEqual(neural_rate(elder), "-3%")
 
     def test_female_first_demo_roles_use_natural_neural_voices(self) -> None:
         self.assertEqual(
@@ -55,9 +63,23 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
             "zh-CN-XiaoyiNeural",
         )
         self.assertEqual(
-            select_neural_voice(VOICE_BY_ID["child_f"]),
-            "zh-TW-HsiaoYuNeural",
+            neural_rate(VOICE_BY_ID["adult_f_soft"]),
+            "-2%",
         )
+        self.assertEqual(
+            select_neural_voice(VOICE_BY_ID["child_f"]),
+            "zh-CN-XiaoyiNeural",
+        )
+
+    def test_adult_man_uses_clear_young_voice_without_pitch_shift(self) -> None:
+        adult_man = VOICE_BY_ID["adult_m_calm"]
+
+        self.assertEqual(
+            select_neural_voice(adult_man),
+            "zh-CN-YunxiNeural",
+        )
+        self.assertEqual(neural_rate(adult_man), "-1%")
+        self.assertEqual(neural_pitch(adult_man), "+0Hz")
 
     def test_english_pack_reuses_stable_character_presets(self) -> None:
         self.assertEqual(
@@ -128,9 +150,9 @@ class NeuralVoicePackProviderTests(unittest.TestCase):
                 [
                     (
                         "火车来啦！",
-                        "zh-TW-HsiaoYuNeural",
-                        "+4%",
-                        "+2Hz",
+                        "zh-CN-XiaoyiNeural",
+                        "+6%",
+                        "+8Hz",
                     )
                 ],
             )

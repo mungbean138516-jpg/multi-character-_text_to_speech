@@ -92,7 +92,7 @@ class DashScopeTTSProvider(TTSProvider):
             if parsed.scheme not in {"https", "http"}:
                 raise RuntimeError("TTS 返回了不受支持的音频 URL")
             download_request = urllib.request.Request(
-                audio_url, headers={"User-Agent": "MultiVoiceAudiobook/0.8"}
+                audio_url, headers={"User-Agent": "MultiVoiceAudiobook/0.9"}
             )
             with urllib.request.urlopen(
                 download_request, timeout=self.timeout

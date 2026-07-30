@@ -2,6 +2,7 @@ import unittest
 
 from audiobook_app.models import AnalysisResult, CharacterProfile, ScriptSegment
 from audiobook_app.registry import CharacterRegistry, MINOR_CHARACTERS_ID
+from audiobook_app.voices import FREE_VOICE_IDS
 
 
 def chapter(character: CharacterProfile, segment_id: str = "seg") -> AnalysisResult:
@@ -26,6 +27,33 @@ def chapter(character: CharacterProfile, segment_id: str = "seg") -> AnalysisRes
 
 
 class CharacterRegistryTests(unittest.TestCase):
+    def test_old_unlocked_premium_voice_migrates_to_free_pack(self) -> None:
+        registry = CharacterRegistry.from_dict(
+            {
+                "characters": [
+                    {
+                        "id": "old_auto",
+                        "name": "旧版自动角色",
+                        "gender": "male",
+                        "age_group": "adult",
+                        "voice_id": "adult_m_bright",
+                        "locked": False,
+                    },
+                    {
+                        "id": "old_locked",
+                        "name": "旧版人工角色",
+                        "gender": "male",
+                        "age_group": "adult",
+                        "voice_id": "adult_m_bright",
+                        "locked": True,
+                    },
+                ]
+            }
+        )
+
+        self.assertIn(registry.characters[0].voice_id, FREE_VOICE_IDS)
+        self.assertEqual(registry.characters[1].voice_id, "adult_m_bright")
+
     def test_alias_keeps_stable_id_and_voice_across_chapters(self) -> None:
         registry = CharacterRegistry()
         first = chapter(

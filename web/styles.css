@@ -83,6 +83,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .brand {
@@ -726,6 +727,51 @@ button:disabled {
   line-height: 1.7;
 }
 
+.voice-plan-strip {
+  margin-top: 18px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  border: 1px solid rgba(60, 140, 108, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(234, 248, 241, 0.76),
+    rgba(255, 249, 242, 0.72)
+  );
+}
+
+.voice-plan-strip strong,
+.voice-plan-strip span {
+  display: block;
+}
+
+.voice-plan-strip strong {
+  color: var(--green);
+  font-size: 12px;
+}
+
+.voice-plan-strip div > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.premium-voice-pill {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(112, 82, 199, 0.16);
+  border-radius: 999px;
+  color: #6d5a9f;
+  background: rgba(112, 82, 199, 0.07);
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .character-grid {
   margin-top: 24px;
   display: grid;
@@ -822,9 +868,25 @@ button:disabled {
   min-width: 0;
 }
 
+.voice-picker .voice-select option:disabled {
+  color: #aaa2b8;
+  background: #f2eff6;
+}
+
 .voice-preview-button {
   min-height: 39px;
   color: var(--orange-dark);
+}
+
+.voice-access-note {
+  grid-column: 1 / -1;
+  color: var(--green);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.voice-access-note.premium {
+  color: #78679f;
 }
 
 .character-details {
