@@ -275,7 +275,7 @@ function updateProviderNotice() {
   const dashscopeReady = Boolean(state.config?.providers?.dashscope?.ready);
   const localReady = Boolean(state.config?.providers?.local?.ready);
   elements.providerNotice.textContent = neuralReady
-    ? "免费 Neural 中文声线已就绪：声音更自然、无需 API Key，但生成时需要联网。"
+    ? "免费 Neural 中英文声线已就绪：纯英文自动切换英文声线，无需 API Key，但生成时需要联网。"
     : dashscopeReady
       ? localReady
         ? "CosyVoice 与 Mac 免费本地语音均已就绪，可任选一种生成。"
@@ -305,6 +305,13 @@ function updateProviderNotice() {
     "secondary-button",
     neuralReady || dashscopeReady,
   );
+}
+
+function currentAnalysisLanguage() {
+  return state.analysis?.detected_language === "en" ||
+    state.analysis?.segments?.some((segment) => segment.language === "en")
+    ? "en"
+    : "zh";
 }
 
 function loadDemo() {
@@ -1564,6 +1571,18 @@ function setActiveSegment(index) {
 
 const NATURAL_FEMALE_VOICE_HINTS = [
   "google",
+  "ana",
+  "aria",
+  "ashley",
+  "cora",
+  "elizabeth",
+  "jane",
+  "jenny",
+  "libby",
+  "michelle",
+  "nancy",
+  "sara",
+  "sonia",
   "huihui",
   "meijia",
   "sinji",
@@ -1580,6 +1599,16 @@ const NATURAL_FEMALE_VOICE_HINTS = [
 ];
 const NATURAL_MALE_VOICE_HINTS = [
   "kangkang",
+  "christopher",
+  "davis",
+  "eric",
+  "guy",
+  "jacob",
+  "jason",
+  "roger",
+  "ryan",
+  "thomas",
+  "tony",
   "limu",
   "yunjian",
   "yunjie",
@@ -1640,10 +1669,21 @@ function browserVoiceGroup(voice) {
   return "unknown";
 }
 
-function browserVoiceScore(voice, targetGender) {
+function browserVoiceScore(voice, targetGender, targetLanguage = "zh") {
   const language = String(voice.lang || "").replace("_", "-").toLowerCase();
   const name = compactVoiceName(voice);
-  let score = language === "zh-cn" ? 60 : language.startsWith("zh") ? 35 : 0;
+  let score =
+    targetLanguage === "en"
+      ? language === "en-us"
+        ? 60
+        : language.startsWith("en")
+          ? 45
+          : 0
+      : language === "zh-cn"
+        ? 60
+        : language.startsWith("zh")
+          ? 35
+          : 0;
   const group = browserVoiceGroup(voice);
   if (group === "novelty") {
     score -= 120;
@@ -1671,13 +1711,18 @@ function stableVoiceHash(value) {
   );
 }
 
-function selectNaturalBrowserVoice(character, preset, voices) {
+function selectNaturalBrowserVoice(
+  character,
+  preset,
+  voices,
+  targetLanguage = "zh",
+) {
   if (!voices.length) return null;
   const targetGender = preset?.gender || character?.gender || "unknown";
   const ranked = voices
     .map((voice) => ({
       voice,
-      score: browserVoiceScore(voice, targetGender),
+      score: browserVoiceScore(voice, targetGender, targetLanguage),
     }))
     .sort(
       (left, right) =>
@@ -1719,9 +1764,6 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     state.config.voices.map((voice) => [voice.id, voice]),
   );
   const browserVoices = await waitForBrowserVoices();
-  const chineseVoices = browserVoices.filter((voice) =>
-    voice.lang.toLowerCase().startsWith("zh"),
-  );
   let index = Math.max(
     0,
     Math.min(startIndex, state.analysis.segments.length - 1),
@@ -1743,6 +1785,10 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     const segment = state.analysis.segments[segmentIndex];
     const character = characters.get(segment.speaker_id);
     const preset = voicePresets.get(character?.voice_id);
+    const targetLanguage = segment.language === "en" ? "en" : "zh";
+    const matchingVoices = browserVoices.filter((voice) =>
+      voice.lang.toLowerCase().startsWith(targetLanguage),
+    );
     const utterance = new SpeechSynthesisUtterance(
       applyPronunciationsToText(segment.text),
     );
@@ -1750,9 +1796,11 @@ async function startBrowserPreview(startIndex = 0, endIndex = null) {
     const selectedVoice = selectNaturalBrowserVoice(
       character,
       preset,
-      chineseVoices,
+      matchingVoices,
+      targetLanguage,
     );
-    utterance.lang = selectedVoice?.lang || "zh-CN";
+    utterance.lang =
+      selectedVoice?.lang || (targetLanguage === "en" ? "en-US" : "zh-CN");
     const baseRate = clampNumber(preset?.browser_rate || 1, 0.88, 1.08);
     utterance.rate = clampNumber(
       baseRate * Number(elements.previewSpeed.value || 1),
@@ -1865,7 +1913,7 @@ function applyRenderPlan(plan) {
       : `<span><strong>约 ¥${Number(plan.estimated_cost_cny).toFixed(4)}</strong> 预计费用</span>`;
   const note = isNeural
     ? remaining
-      ? `将使用更自然的免费 Neural 中文声线；已有 ${ready} 句可直接复用。`
+      ? `将使用更自然的免费 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线；已有 ${ready} 句可直接复用。`
       : "所有 Neural 句子都已经生成过，可直接复用并导出。"
     : isLocal
       ? remaining
@@ -1973,7 +2021,7 @@ async function renderSingleSegment(index) {
       result.cache_hits > 0
         ? "直接使用了已准备好的版本"
         : provider === "neural"
-          ? "使用免费 Neural 中文声线生成；下次生成全书时会直接复用"
+          ? `使用免费 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线生成；下次生成全书时会直接复用`
           : provider === "local"
             ? "使用 Mac 本地中文语音生成；下次生成全书时会直接复用"
             : "只生成了这一句；下次生成全书时会直接复用";
@@ -2020,7 +2068,7 @@ async function renderAudio(provider) {
     activeButton,
     true,
     provider === "neural"
-      ? "正在调用 Neural 中文声线…"
+      ? `正在调用 Neural ${currentAnalysisLanguage() === "en" ? "英文" : "中文"}声线…`
       : provider === "dashscope"
         ? "正在加入后台任务…"
         : "正在调用 Mac 中文语音…",

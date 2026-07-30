@@ -12,7 +12,7 @@ from ..voices import VoicePreset
 from .base import TTSProvider
 
 
-NEURAL_VOICE_MAP_VERSION = 1
+NEURAL_VOICE_MAP_VERSION = 2
 
 # The free Edge catalogue currently exposes fourteen Chinese neural voices.
 # Auto-casting uses nine Mandarin / Taiwan Mandarin voices; Cantonese and
@@ -51,6 +51,41 @@ _FALLBACK_BY_GENDER = {
     "male": "zh-CN-YunxiNeural",
 }
 
+# English voices use the same stable preset IDs as the Chinese pack. This
+# means casting, locking, aliases, and cross-chapter persistence need no
+# separate code path; only the provider voice changes for a pure-English book.
+ENGLISH_NEURAL_VOICE_BY_PRESET: dict[str, str] = {
+    "narrator_f": "en-US-JennyNeural",
+    "narrator_m": "en-US-GuyNeural",
+    "narrator_f_warm": "en-GB-SoniaNeural",
+    "narrator_m_story": "en-GB-RyanNeural",
+    "adult_f_soft": "en-US-JaneNeural",
+    "adult_f_warm": "en-US-AriaNeural",
+    "adult_m_bright": "en-US-ChristopherNeural",
+    "adult_m_calm": "en-US-DavisNeural",
+    "adult_m_wise": "en-US-RogerNeural",
+    "adult_f_cheerful": "en-US-SaraNeural",
+    "adult_f_low": "en-US-MichelleNeural",
+    "adult_f_gentle": "en-US-NancyNeural",
+    "adult_f_composed": "en-GB-LibbyNeural",
+    "young_m_crisp": "en-US-EricNeural",
+    "young_f_sweet": "en-US-AshleyNeural",
+    "young_m_clear": "en-US-JasonNeural",
+    "adult_m_warm": "en-GB-ThomasNeural",
+    "adult_m_deadpan": "en-US-TonyNeural",
+    "adult_m_melancholy": "en-GB-RyanNeural",
+    "teen_f": "en-US-CoraNeural",
+    "child_f": "en-US-AnaNeural",
+    "child_m": "en-US-JacobNeural",
+    "elder_f": "en-US-ElizabethNeural",
+    "elder_m": "en-US-RogerNeural",
+}
+
+_ENGLISH_FALLBACK_BY_GENDER = {
+    "female": "en-US-JennyNeural",
+    "male": "en-US-GuyNeural",
+}
+
 
 def neural_voice_pack_is_available() -> bool:
     """Return whether both optional runtime packages are installed."""
@@ -61,7 +96,15 @@ def neural_voice_pack_is_available() -> bool:
     )
 
 
-def select_neural_voice(preset: VoicePreset) -> str:
+def select_neural_voice(preset: VoicePreset, language: str = "zh") -> str:
+    if language == "en":
+        return ENGLISH_NEURAL_VOICE_BY_PRESET.get(
+            preset.id,
+            _ENGLISH_FALLBACK_BY_GENDER.get(
+                preset.gender,
+                "en-US-JennyNeural",
+            ),
+        )
     return NEURAL_VOICE_BY_PRESET.get(
         preset.id,
         _FALLBACK_BY_GENDER.get(
@@ -139,7 +182,7 @@ def _decode_mp3_to_wav(source: Path, target: Path) -> None:
 
 
 class NeuralVoicePackProvider(TTSProvider):
-    """Generate high-quality Mandarin speech through the free Edge service."""
+    """Generate Mandarin or English speech through the free Edge service."""
 
     name = "neural"
 
@@ -178,7 +221,8 @@ class NeuralVoicePackProvider(TTSProvider):
         voice: VoicePreset,
         output_path: Path,
     ) -> dict[str, object]:
-        voice_name = select_neural_voice(voice)
+        language = "en" if segment.language == "en" else "zh"
+        voice_name = select_neural_voice(voice, language)
         rate = neural_rate(voice)
         pitch = neural_pitch(voice)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,5 +262,10 @@ class NeuralVoicePackProvider(TTSProvider):
             "rate": rate,
             "pitch": pitch,
             "characters": len(segment.text),
-            "note": "免 Key 在线 Neural 中文声线（实验）",
+            "language": language,
+            "note": (
+                "免 Key 在线 Neural 英文声线（实验）"
+                if language == "en"
+                else "免 Key 在线 Neural 中文声线（实验）"
+            ),
         }

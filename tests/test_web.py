@@ -65,6 +65,8 @@ class WebContractTests(unittest.TestCase):
         self.assertNotIn('id="demoRenderButton"', html)
         self.assertIn("selectNaturalBrowserVoice", javascript)
         self.assertIn("NOVELTY_VOICE_HINTS", javascript)
+        self.assertIn('segment.language === "en"', javascript)
+        self.assertIn('"en-US" : "zh-CN"', javascript)
         self.assertIn("HIGH_QUALITY_BROWSER_VOICE_HINTS", javascript)
         self.assertIn('renderAudio("neural")', javascript)
 

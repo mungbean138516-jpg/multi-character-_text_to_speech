@@ -259,6 +259,30 @@ class ServerIntegrationTests(unittest.TestCase):
             "edge-tts",
             config["providers"]["neural"]["install_command"],
         )
+        self.assertEqual(
+            config["providers"]["neural"]["supported_languages"],
+            ["zh", "en"],
+        )
+
+    def test_pure_english_analysis_marks_every_segment_for_english(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {
+                "mode": "local",
+                "text": (
+                    "The rain stopped before midnight. "
+                    '"We should leave now," Alice said. '
+                    "The last train was waiting."
+                ),
+            },
+        )
+
+        self.assertEqual(analysis["detected_language"], "en")
+        self.assertTrue(analysis["segments"])
+        self.assertEqual(
+            {segment["language"] for segment in analysis["segments"]},
+            {"en"},
+        )
 
 
 if __name__ == "__main__":
