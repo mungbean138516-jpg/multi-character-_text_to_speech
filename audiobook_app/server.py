@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+from uuid import uuid4
 
 from . import __version__
 from .analyzer import HeuristicNovelAnalyzer
@@ -18,7 +19,7 @@ from .document_import import parse_document
 from .directing import consistency_check, direct_text
 from .jobs import RenderJobManager, RenderJobNotFoundError
 from .language import detect_text_language
-from .models import AnalysisResult
+from .models import AnalysisResult, ScriptSegment
 from .providers import (
     DashScopeTTSProvider,
     DemoToneProvider,
@@ -28,7 +29,8 @@ from .providers import (
     macos_local_tts_is_available,
     neural_voice_pack_is_available,
 )
-from .qwen import QwenNovelAnalyzer, qwen_is_configured
+from .providers.macos import list_macos_chinese_voices
+from .qwen import QwenNovelAnalyzer, chat_with_character, qwen_is_configured
 from .registry import CharacterRegistry
 from .voices import FREE_VOICE_IDS, catalog_as_dicts
 
@@ -47,6 +49,10 @@ MAX_DOCUMENT_BYTES = int(os.getenv("APP_MAX_DOCUMENT_BYTES", "20000000"))
 MAX_ANALYZE_CHARACTERS = int(os.getenv("APP_MAX_ANALYZE_CHARACTERS", "50000"))
 MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
 MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
+MAX_CHAT_SOURCE_CHARACTERS = int(
+    os.getenv("APP_MAX_CHAT_SOURCE_CHARACTERS", "200000")
+)
+MAX_CHAT_MESSAGE_CHARACTERS = 600
 MAX_PRIMARY_CHARACTERS = max(
     1,
     min(10, int(os.getenv("APP_MAX_PRIMARY_CHARACTERS", "10"))),
@@ -207,6 +213,14 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                             "label": "阿里云百炼 CosyVoice",
                         },
                     },
+                    "local_voices": (
+                        [
+                            {"name": voice.name, "locale": voice.locale}
+                            for voice in list_macos_chinese_voices()
+                        ]
+                        if local_tts_ready
+                        else []
+                    ),
                     "voices": catalog_as_dicts(),
                     "voice_access": {
                         "free_voice_ids": sorted(FREE_VOICE_IDS),
@@ -250,6 +264,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "rule_director": True,
                         "emotion_curve": True,
                         "voice_similarity": True,
+                        "character_chat": qwen_is_configured(),
                     },
                 }
             )
@@ -302,10 +317,16 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if path == "/api/analyze":
                 self._handle_analyze(payload)
+            elif path == "/api/preview/local-voice":
+                self._handle_local_voice_preview(payload)
+            elif path == "/api/preview/neural":
+                self._handle_neural_preview(payload)
             elif path == "/api/render/plan":
                 self._handle_render_plan(payload)
             elif path == "/api/render/segment":
                 self._handle_render_segment(payload)
+            elif path == "/api/character-chat":
+                self._handle_character_chat(payload)
             elif path == "/api/render/jobs":
                 self._handle_render_job_create(payload)
             elif path.startswith("/api/render/jobs/"):
@@ -439,6 +460,75 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             plan["note"] = "内部音频管线检查不消耗 API 额度。"
         self._send_json(plan)
 
+    def _handle_local_voice_preview(self, payload: dict[str, Any]) -> None:
+        voice_name = str(payload.get("voice_name", "")).strip()
+        text = str(payload.get("text", "")).strip()
+        if not voice_name:
+            raise ValueError("请选择要试听的 Mac 声音")
+        if not text:
+            raise ValueError("请输入试听文字")
+        if len(text) > 300:
+            raise ValueError("试听文字最多 300 个字符")
+        provider = _provider_for_name("local")
+        if not isinstance(provider, MacOSLocalTTSProvider):
+            raise RuntimeError("Mac 本地声音不可用")
+        preview_id = uuid4().hex[:12]
+        output_path = OUTPUT_ROOT / preview_id / "voice-preview.wav"
+        provider.synthesize_preview(text, voice_name, output_path)
+        self._send_json(
+            {
+                "status": "completed",
+                "voice_name": voice_name,
+                "audio_url": f"/outputs/{preview_id}/{output_path.name}",
+            },
+            HTTPStatus.CREATED,
+        )
+
+    def _handle_neural_preview(self, payload: dict[str, Any]) -> None:
+        """Render one short, immediately playable Neural line for a character."""
+
+        analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
+        character_id = str(payload.get("character_id", "")).strip()
+        text = str(payload.get("text", "")).strip()
+        if not character_id:
+            raise ValueError("缺少角色")
+        if not text:
+            raise ValueError("请输入要试听的文字")
+        if len(text) > 1_000:
+            raise ValueError("即时试听最多 1000 个字符")
+        character = next(
+            (item for item in analysis.characters if item.id == character_id),
+            None,
+        )
+        if character is None:
+            raise ValueError("找不到这个角色")
+        preview = AnalysisResult(
+            characters=analysis.characters,
+            segments=[
+                ScriptSegment(
+                    id=f"neural-preview-{uuid4().hex}",
+                    kind="dialogue",
+                    text=text,
+                    speaker_id=character.id,
+                )
+            ],
+            analyzer="neural-preview",
+            pronunciations=analysis.pronunciations,
+        )
+        provider = _provider_for_name("neural")
+        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        result = render_audiobook(
+            preview,
+            provider,
+            OUTPUT_ROOT,
+            max_characters=1_000,
+            max_segments=1,
+            cache_root=CACHE_ROOT,
+            max_attempts=TTS_MAX_ATTEMPTS,
+            output_format="wav",
+        )
+        self._send_json(result, HTTPStatus.CREATED)
+
     def _handle_render(self, payload: dict[str, Any]) -> None:
         analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
         if not analysis.segments:
@@ -571,6 +661,86 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
         result["speaker_id"] = selected_segment.speaker_id
         self._send_json(result, HTTPStatus.CREATED)
 
+    def _handle_character_chat(self, payload: dict[str, Any]) -> None:
+        analysis = AnalysisResult.from_dict(payload.get("analysis", {}))
+        character_id = str(payload.get("character_id", "")).strip()
+        user_message = str(payload.get("message", "")).strip()
+        source_text = str(payload.get("source_text", "")).strip()
+        if not character_id:
+            raise ValueError("请选择要对话的角色")
+        if not user_message:
+            raise ValueError("请输入想对角色说的话")
+        if len(user_message) > MAX_CHAT_MESSAGE_CHARACTERS:
+            raise ValueError(f"单条消息最多 {MAX_CHAT_MESSAGE_CHARACTERS} 个字符")
+        if not source_text:
+            raise ValueError("缺少小说原文，无法建立角色上下文")
+        if len(source_text) > MAX_CHAT_SOURCE_CHARACTERS:
+            raise ValueError(
+                f"角色对话最多使用 {MAX_CHAT_SOURCE_CHARACTERS} 个字符的原文"
+            )
+        character = next(
+            (item for item in analysis.characters if item.id == character_id),
+            None,
+        )
+        if character is None:
+            raise ValueError("找不到这个角色")
+        raw_history = payload.get("history", [])
+        if not isinstance(raw_history, list):
+            raise ValueError("对话记录格式错误")
+        history: list[dict[str, str]] = []
+        for item in raw_history[-12:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", ""))
+            content = str(item.get("content", "")).strip()
+            if role in {"user", "assistant"} and content:
+                history.append({"role": role, "content": content[:800]})
+        reply = chat_with_character(
+            source_text=source_text,
+            character=character,
+            user_message=user_message,
+            history=history,
+        )
+        audio_url = None
+        if neural_voice_pack_is_available():
+            try:
+                preview = AnalysisResult(
+                    characters=analysis.characters,
+                    segments=[
+                        ScriptSegment(
+                            id=f"character-chat-{uuid4().hex}",
+                            kind="dialogue",
+                            text=reply,
+                            speaker_id=character.id,
+                        )
+                    ],
+                    analyzer="character-chat",
+                    pronunciations=analysis.pronunciations,
+                )
+                result = render_audiobook(
+                    preview,
+                    _provider_for_name("neural"),
+                    OUTPUT_ROOT,
+                    max_characters=1_000,
+                    max_segments=1,
+                    cache_root=CACHE_ROOT,
+                    max_attempts=TTS_MAX_ATTEMPTS,
+                    output_format="wav",
+                )
+                audio_url = result.get("audio_url")
+            except (OSError, RuntimeError, ValueError):
+                # Keep the text conversation usable when the free online
+                # Neural service is temporarily unavailable.
+                audio_url = None
+        self._send_json(
+            {
+                "character_id": character.id,
+                "character_name": character.name,
+                "reply": reply,
+                "audio_url": audio_url,
+            }
+        )
+
     def _serve_static(self, request_path: str) -> None:
         clean = posixpath.normpath(unquote(request_path)).lstrip("/")
         if clean in {"", "."}:
@@ -612,8 +782,9 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.NOT_FOUND,
             )
             return
-        candidate = (OUTPUT_ROOT / relative).resolve()
-        if OUTPUT_ROOT not in candidate.parents or not candidate.is_file():
+        output_root = OUTPUT_ROOT.resolve()
+        candidate = (output_root / relative).resolve()
+        if output_root not in candidate.parents or not candidate.is_file():
             self._send_json(
                 {"error": "not_found", "message": "输出文件不存在"},
                 HTTPStatus.NOT_FOUND,

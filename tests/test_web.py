@@ -74,6 +74,8 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("provider: previewState.provider", javascript)
         self.assertIn('requestJson("/api/render/segment"', javascript)
         self.assertIn("▶ Neural 试听", javascript)
+        self.assertIn("previewInstalledLocalVoice", javascript)
+        self.assertIn("local_voices", javascript)
 
     def test_free_and_premium_voice_tiers_are_clear(self) -> None:
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -162,6 +164,18 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("replacement-preview", javascript)
         self.assertIn("replacement-apply", javascript)
         self.assertIn("applyReplacementVoice", javascript)
+
+    def test_character_chat_uses_book_context_and_character_voice(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="characterChatPanel"', html)
+        self.assertIn('id="chatMessageInput"', html)
+        self.assertIn('requestJson("/api/character-chat"', javascript)
+        self.assertIn("function chatContextText()", javascript)
+        self.assertIn("function speakCharacterReply", javascript)
+        self.assertIn("function playCharacterChatAudio", javascript)
+        self.assertIn('requestJson("/api/preview/neural"', javascript)
+        self.assertIn("chat_messages", javascript)
 
 
 if __name__ == "__main__":

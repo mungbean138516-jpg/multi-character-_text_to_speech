@@ -85,6 +85,9 @@ const state = {
   waitingForProgressiveSegment: false,
   book: null,
   characterRegistry: emptyCharacterRegistry(),
+  chatCharacterId: null,
+  chatMessages: {},
+  chatOpen: false,
 };
 
 const elements = {};
@@ -138,8 +141,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     "scriptTimeline",
     "playButton",
     "stopButton",
+    "chatToggleButton",
     "previewSpeed",
     "nowPlaying",
+    "characterChatPanel",
+    "chatCharacterSelect",
+    "chatAvailability",
+    "chatTranscript",
+    "characterChatForm",
+    "chatMessageInput",
+    "sendChatButton",
+    "closeChatButton",
     "providerNotice",
     "outputFormat",
     "renderPlan",
@@ -205,6 +217,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.compareVoicesButton.addEventListener("click", compareVoiceSamples);
   elements.playButton.addEventListener("click", () => startScriptPreview(0));
   elements.stopButton.addEventListener("click", stopAllPreviews);
+  elements.chatToggleButton.addEventListener("click", () => {
+    stopAllPreviews();
+    state.chatOpen = true;
+    renderCharacterChat();
+    elements.chatMessageInput.focus();
+  });
+  elements.closeChatButton.addEventListener("click", () => {
+    state.chatOpen = false;
+    renderCharacterChat();
+  });
+  elements.chatCharacterSelect.addEventListener("change", () => {
+    state.chatCharacterId = elements.chatCharacterSelect.value || null;
+    renderCharacterChat();
+    scheduleDraftSave();
+  });
+  elements.characterChatForm.addEventListener("submit", sendCharacterChat);
   elements.previewSpeed.addEventListener("change", () => {
     scheduleDraftSave();
     if (state.scriptPreviewMode === "neural" && state.scriptPreviewAudio) {
@@ -1159,6 +1187,7 @@ function renderAnalysis() {
   renderEmotionEditor();
   renderVoiceSamples();
   renderPronunciations();
+  renderCharacterChat();
   renderTimeline();
   elements.audioResult.hidden = true;
   updateActionAvailability();
@@ -1214,6 +1243,12 @@ function renderCharacters() {
           `<option value="${escapeAttribute(candidate.id)}">${escapeHtml(candidate.name)}</option>`,
       )
       .join("");
+    const localVoiceOptions = (state.config?.local_voices || [])
+      .map(
+        (voice) =>
+          `<option value="${escapeAttribute(voice.name)}">${escapeHtml(voice.name)} · ${escapeHtml(voice.locale)}</option>`,
+      )
+      .join("");
 
     card.innerHTML = `
       <div class="character-head">
@@ -1258,6 +1293,17 @@ function renderCharacters() {
         </div>
         <div class="trait-list">${traits}</div>
         <p class="evidence">判断依据：“${escapeHtml(evidence)}”</p>
+        ${
+          localVoiceOptions
+            ? `<div class="local-voice-trial">
+                <label class="field-label">试试已安装的 Mac 声音
+                  <select class="local-voice-select">${localVoiceOptions}</select>
+                </label>
+                <button class="mini-button local-voice-preview-button" type="button">▶ 试听这个声音</button>
+                <small>仅试听，不会改变当前角色的自动选角。</small>
+              </div>`
+            : ""
+        }
         ${
           character.id === "narrator"
             ? ""
@@ -1327,6 +1373,18 @@ function renderCharacters() {
     previewButton.addEventListener("click", () =>
       previewCharacterVoice(character.id, previewButton),
     );
+    const localVoicePreviewButton = card.querySelector(
+      ".local-voice-preview-button",
+    );
+    if (localVoicePreviewButton) {
+      localVoicePreviewButton.addEventListener("click", () =>
+        previewInstalledLocalVoice(
+          character,
+          card.querySelector(".local-voice-select").value,
+          localVoicePreviewButton,
+        ),
+      );
+    }
     if (character.id !== "narrator") {
       card.querySelector(".alias-input").addEventListener("change", (event) => {
         character.aliases = uniqueValues(
@@ -2209,6 +2267,24 @@ async function previewCharacterVoice(characterId, button) {
   }
 }
 
+async function previewInstalledLocalVoice(character, voiceName, button) {
+  if (!voiceName || !state.config?.providers?.local?.ready) return;
+  const text = `你好，我是${character.name}。很高兴在这个故事里和你见面。`;
+  setBusy(button, true, "正在准备…");
+  try {
+    const result = await requestJson("/api/preview/local-voice", {
+      method: "POST",
+      body: JSON.stringify({ voice_name: voiceName, text }),
+    });
+    const audio = new Audio(result.audio_url);
+    await audio.play();
+  } catch (error) {
+    showMessage(error.message || "这个本机声音暂时无法试听。");
+  } finally {
+    setBusy(button, false, "▶ 试听这个声音");
+  }
+}
+
 function applyPronunciationsToText(text) {
   const entries = Object.entries(state.analysis?.pronunciations || {}).sort(
     ([first], [second]) => second.length - first.length,
@@ -2234,6 +2310,13 @@ function setActiveSegment(index) {
     (candidate) => candidate.id === segment?.speaker_id,
   );
   if (!segment) return;
+  if (character) {
+    state.chatCharacterId = character.id;
+    if (elements.chatCharacterSelect) {
+      elements.chatCharacterSelect.value = character.id;
+      renderCharacterChat();
+    }
+  }
   elements.nowPlaying.innerHTML = `
     <span class="now-playing-dot"></span>
     <b>正在播放 · ${escapeHtml(character?.name || "待确认角色")}</b>
@@ -2549,6 +2632,10 @@ async function startNeuralScriptPreview(startIndex = 0, endIndex = null) {
 }
 
 async function startBrowserPreview(startIndex = 0, endIndex = null) {
+  return startDevicePreview(startIndex, endIndex);
+}
+
+async function startDevicePreview(startIndex = 0, endIndex = null) {
   if (state.analysisStale) {
     showMessage("原文已经变更，请重新分析后再试听。");
     return;
@@ -2669,6 +2756,165 @@ function stopScriptPreview(finished = false) {
       ? "▶ Neural 连续试听"
       : "▶ 设备试听（兼容模式）";
     updateActionAvailability();
+  }
+  renderCharacterChat();
+}
+
+function chatContextText() {
+  if (state.book) {
+    return state.book.chapters.map((chapter) => chapter.text).join("\n\n");
+  }
+  return elements.sourceText.value;
+}
+
+function chatMessagesForCharacter(characterId) {
+  return Array.isArray(state.chatMessages[characterId])
+    ? state.chatMessages[characterId]
+    : [];
+}
+
+function renderCharacterChat() {
+  if (!elements.characterChatPanel) return;
+  const characters = state.analysis?.characters || [];
+  const available = Boolean(
+    state.analysis && !state.analysisStale && characters.length,
+  );
+  elements.characterChatPanel.hidden = !available || !state.chatOpen;
+  if (!available) return;
+  if (!characters.some((character) => character.id === state.chatCharacterId)) {
+    state.chatCharacterId = characters[0].id;
+  }
+  elements.chatCharacterSelect.innerHTML = characters
+    .map(
+      (character) =>
+        `<option value="${escapeAttribute(character.id)}">${escapeHtml(character.name)}</option>`,
+    )
+    .join("");
+  elements.chatCharacterSelect.value = state.chatCharacterId;
+  const chatReady = Boolean(state.config?.features?.character_chat);
+  elements.chatAvailability.textContent = chatReady
+    ? state.config?.providers?.neural?.ready
+      ? "使用千问生成回复，并用该角色的 Neural 声线朗读。"
+      : "使用千问生成回复；播放将使用该角色当前的浏览器试听声线。"
+    : "配置 DASHSCOPE_API_KEY 与 DASHSCOPE_LLM_BASE_URL 后即可启用角色对话。";
+  elements.chatAvailability.classList.toggle("unavailable", !chatReady);
+  elements.chatMessageInput.disabled = !chatReady || state.isSpeaking;
+  elements.sendChatButton.disabled = !chatReady || state.isSpeaking;
+  const messages = chatMessagesForCharacter(state.chatCharacterId);
+  elements.chatTranscript.innerHTML = messages.length
+    ? messages
+        .map(
+          (message) =>
+            `<p class="chat-message ${message.role === "assistant" ? "character" : "user"}"><b>${escapeHtml(message.role === "assistant" ? (characters.find((character) => character.id === state.chatCharacterId)?.name || "角色") : "你")}</b>${escapeHtml(message.content)}</p>`,
+        )
+        .join("")
+    : "<p class=\"chat-empty\">停止试听后，输入一句话开始对话。</p>";
+  elements.chatTranscript.scrollTop = elements.chatTranscript.scrollHeight;
+}
+
+async function playCharacterChatAudio(audioUrl, characterId) {
+  stopCharacterVoicePreview();
+  const audio = new Audio(audioUrl);
+  audio.preload = "auto";
+  state.voicePreviewAudio = audio;
+  state.voicePreviewCharacterId = characterId;
+  audio.onended = () => stopCharacterVoicePreview();
+  audio.onerror = () => {
+    stopCharacterVoicePreview();
+    showMessage("角色回复已经生成，但音频暂时无法播放。");
+  };
+  updateActionAvailability();
+  try {
+    await audio.play();
+  } catch {
+    elements.audioResult.hidden = false;
+    elements.resultAudio.src = audioUrl;
+    elements.audioTitle.textContent = "角色回复已经准备好";
+    elements.audioMeta.textContent =
+      "浏览器阻止了自动播放，请点击播放器开始。";
+    elements.downloadLink.href = audioUrl;
+    elements.downloadLink.textContent = "下载角色回复 WAV ↓";
+    elements.wavDownloadLink.hidden = true;
+    showMessage("回复已经生成，请点击页面下方播放器播放。", true);
+  }
+}
+
+async function speakCharacterReply(text, character) {
+  if (state.config?.providers?.neural?.ready) {
+    const result = await requestJson("/api/preview/neural", {
+      method: "POST",
+      body: JSON.stringify({
+        analysis: state.analysis,
+        character_id: character.id,
+        text,
+      }),
+    });
+    if (!result.audio_url) throw new Error("Neural 声线没有返回音频");
+    await playCharacterChatAudio(result.audio_url, character.id);
+    return;
+  }
+  if (!("speechSynthesis" in window) || !character) return;
+  const presets = new Map(state.config.voices.map((voice) => [voice.id, voice]));
+  const preset = presets.get(character.voice_id);
+  const voices = (await waitForBrowserVoices()).filter((voice) =>
+    voice.lang.toLowerCase().startsWith("zh"),
+  );
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = selectNaturalBrowserVoice(character, preset, voices);
+  utterance.lang = voice?.lang || "zh-CN";
+  utterance.rate = clampNumber(preset?.browser_rate || 1, 0.88, 1.08);
+  utterance.pitch = clampNumber(preset?.browser_pitch || 1, 0.92, 1.1);
+  if (voice) utterance.voice = voice;
+  state.isSpeaking = true;
+  const finish = () => {
+    state.isSpeaking = false;
+    updateActionAvailability();
+    renderCharacterChat();
+  };
+  utterance.onend = finish;
+  utterance.onerror = finish;
+  window.speechSynthesis.cancel();
+  updateActionAvailability();
+  window.speechSynthesis.speak(utterance);
+}
+
+async function sendCharacterChat(event) {
+  event.preventDefault();
+  const message = elements.chatMessageInput.value.trim();
+  const character = state.analysis?.characters.find(
+    (item) => item.id === state.chatCharacterId,
+  );
+  if (!message || !character || state.isSpeaking) return;
+  const history = chatMessagesForCharacter(character.id);
+  setBusy(elements.sendChatButton, true, "正在回答…");
+  try {
+    const result = await requestJson("/api/character-chat", {
+      method: "POST",
+      body: JSON.stringify({
+        analysis: state.analysis,
+        character_id: character.id,
+        source_text: chatContextText(),
+        message,
+        history,
+      }),
+    });
+    state.chatMessages[character.id] = [
+      ...history,
+      { role: "user", content: message },
+      { role: "assistant", content: result.reply },
+    ].slice(-24);
+    elements.chatMessageInput.value = "";
+    renderCharacterChat();
+    scheduleDraftSave();
+    if (result.audio_url) {
+      await playCharacterChatAudio(result.audio_url, character.id);
+    } else {
+      await speakCharacterReply(result.reply, character);
+    }
+  } catch (error) {
+    showMessage(error.message || "角色暂时无法回答，请稍后再试。");
+  } finally {
+    setBusy(elements.sendChatButton, false, "发送并听回复");
   }
 }
 
@@ -3246,6 +3492,7 @@ function updateActionAvailability() {
   elements.playButton.disabled = unavailable || state.isSpeaking;
   elements.stopButton.disabled =
     !state.isSpeaking && !state.voicePreviewAudio;
+  elements.chatToggleButton.disabled = unavailable;
   elements.previewSpeed.disabled = state.isRendering;
   elements.neuralRenderButton.disabled =
     unavailable ||
@@ -3275,6 +3522,7 @@ function updateActionAvailability() {
       state.isSpeaking ||
       button.dataset.previewLocked === "true";
   }
+  renderCharacterChat();
   renderBookNavigation();
 }
 
@@ -3305,6 +3553,8 @@ async function saveDraft() {
     book: state.book,
     character_registry: state.characterRegistry,
     render_job_ids: state.renderJobIds,
+    chat_character_id: state.chatCharacterId,
+    chat_messages: state.chatMessages,
     saved_at: savedAt,
   };
   try {
@@ -3369,6 +3619,11 @@ async function restoreDraft() {
     const migratedLegacyDemo = migrateLegacyBuiltInDemo(project);
     state.sourceFile = project.source_file || null;
     state.renderJobIds = normalizeRenderJobIds(project.render_job_ids);
+    state.chatCharacterId =
+      typeof project.chat_character_id === "string"
+        ? project.chat_character_id
+        : null;
+    state.chatMessages = normalizeChatMessages(project.chat_messages);
     if (
       project.analyzer_mode &&
       [...elements.analyzerMode.options].some(
@@ -3555,6 +3810,33 @@ function hideMessage() {
 
 function uniqueValues(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeChatMessages(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([characterId, messages]) =>
+        characterId.length <= 160 && Array.isArray(messages),
+      )
+      .slice(0, 50)
+      .map(([characterId, messages]) => [
+        characterId,
+        messages
+          .filter(
+            (message) =>
+              message &&
+              ["user", "assistant"].includes(message.role) &&
+              typeof message.content === "string" &&
+              message.content.trim(),
+          )
+          .slice(-24)
+          .map((message) => ({
+            role: message.role,
+            content: message.content.trim().slice(0, 800),
+          })),
+      ]),
+  );
 }
 
 function escapeHtml(value) {

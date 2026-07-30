@@ -299,6 +299,65 @@ class ServerIntegrationTests(unittest.TestCase):
             {"en"},
         )
 
+    def test_character_chat_returns_the_selected_character_reply(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {"mode": "local", "text": "林夏说：“我们出发吧。”"},
+        )
+        character = next(
+            item for item in analysis["characters"] if item["name"] == "林夏"
+        )
+        with patch.object(
+            app_server,
+            "chat_with_character",
+            return_value="我已经准备好了。",
+        ) as chat, patch.object(
+            app_server,
+            "neural_voice_pack_is_available",
+            return_value=False,
+        ):
+            result = self.post(
+                "/api/character-chat",
+                {
+                    "analysis": analysis,
+                    "character_id": character["id"],
+                    "source_text": "林夏说：“我们出发吧。”",
+                    "message": "你准备好了吗？",
+                    "history": [{"role": "user", "content": "之前的问题"}],
+                },
+            )
+
+        self.assertEqual(result["character_id"], character["id"])
+        self.assertEqual(result["character_name"], "林夏")
+        self.assertEqual(result["reply"], "我已经准备好了。")
+        self.assertEqual(chat.call_args.kwargs["user_message"], "你准备好了吗？")
+
+    def test_neural_preview_returns_playable_single_line_audio(self) -> None:
+        analysis = self.post(
+            "/api/analyze",
+            {"mode": "local", "text": "林夏说：“我们出发吧。”"},
+        )
+        character = next(
+            item for item in analysis["characters"] if item["name"] == "林夏"
+        )
+        with patch.object(
+            app_server,
+            "_provider_for_name",
+            return_value=app_server.DemoToneProvider(),
+        ):
+            result = self.post(
+                "/api/preview/neural",
+                {
+                    "analysis": analysis,
+                    "character_id": character["id"],
+                    "text": "我们出发吧。",
+                },
+            )
+
+        self.assertEqual(result["status"], "completed")
+        with urllib.request.urlopen(self.base_url + result["audio_url"]) as response:
+            self.assertGreater(len(response.read()), 44)
+
 
 if __name__ == "__main__":
     unittest.main()

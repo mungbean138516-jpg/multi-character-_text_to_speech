@@ -225,11 +225,46 @@ class MacOSLocalTTSProvider(TTSProvider):
         del character
         system_voice = select_macos_voice(self.voices, voice)
         rate = macos_speech_rate(voice)
+        return self._synthesize_with_system_voice(
+            segment.text,
+            system_voice,
+            rate,
+            output_path,
+        )
+
+    def synthesize_preview(
+        self,
+        text: str,
+        system_voice_name: str,
+        output_path: Path,
+    ) -> dict[str, object]:
+        """Render a user-selected installed voice for audition only."""
+
+        system_voice = next(
+            (voice for voice in self.voices if voice.name == system_voice_name),
+            None,
+        )
+        if system_voice is None:
+            raise ValueError("所选 Mac 声音不在当前已安装的声音列表中")
+        return self._synthesize_with_system_voice(
+            text,
+            system_voice,
+            190,
+            output_path,
+        )
+
+    def _synthesize_with_system_voice(
+        self,
+        text: str,
+        system_voice: MacOSVoice,
+        rate: int,
+        output_path: Path,
+    ) -> dict[str, object]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         token = uuid4().hex
         text_path = output_path.with_name(f".{output_path.stem}.{token}.txt")
         aiff_path = output_path.with_name(f".{output_path.stem}.{token}.aiff")
-        text_path.write_text(segment.text, encoding="utf-8")
+        text_path.write_text(text, encoding="utf-8")
         output_path.unlink(missing_ok=True)
         try:
             spoken = self._runner(
@@ -289,6 +324,6 @@ class MacOSLocalTTSProvider(TTSProvider):
             "system_voice": system_voice.name,
             "locale": system_voice.locale,
             "rate": rate,
-            "characters": len(segment.text),
+            "characters": len(text),
             "note": "Mac 本机真实中文语音",
         }
