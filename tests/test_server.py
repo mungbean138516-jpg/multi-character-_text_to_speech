@@ -278,6 +278,10 @@ class ServerIntegrationTests(unittest.TestCase):
             config["providers"]["neural"]["supported_languages"],
             ["zh", "en"],
         )
+        self.assertEqual(
+            config["limits"]["chat_context_characters"],
+            app_server.MAX_CHAT_CONTEXT_CHARACTERS,
+        )
 
     def test_pure_english_analysis_marks_every_segment_for_english(self) -> None:
         analysis = self.post(
@@ -331,6 +335,13 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(result["character_name"], "林夏")
         self.assertEqual(result["reply"], "我已经准备好了。")
         self.assertEqual(chat.call_args.kwargs["user_message"], "你准备好了吗？")
+        self.assertIn("林夏说", chat.call_args.kwargs["source_text"])
+        self.assertEqual(result["audio_status"], "browser_fallback")
+        self.assertGreater(result["grounding"]["passage_count"], 0)
+        self.assertLessEqual(
+            result["grounding"]["selected_characters"],
+            app_server.MAX_CHAT_CONTEXT_CHARACTERS,
+        )
 
     def test_neural_preview_returns_playable_single_line_audio(self) -> None:
         analysis = self.post(

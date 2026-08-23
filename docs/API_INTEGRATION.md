@@ -90,6 +90,20 @@ export DASHSCOPE_LLM_MODEL="qwen3.7-flash"
 - [OpenAI Chat 兼容](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
 - [千问结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)
 
+## 角色对话与文本边界
+
+`POST /api/character-chat` 与角色分析共用千问配置，但不直接把浏览器提交的整本书转发给模型。服务端先用角色名、别名、人物证据和当前提问在本地评分，再选出相关段落与相邻叙事。
+
+默认最多发送 12,000 字符，可在服务端调整：
+
+```bash
+export APP_MAX_CHAT_CONTEXT_CHARACTERS=12000
+```
+
+请求的 `source_text` 仍只在 Python 服务进程内处理，响应中的 `grounding` 只返回字符数、片段数和截断状态，不复制原文。页面会在发送前明示说明文本将进入已配置的千问服务。
+
+文字回复和语音播放分层处理：千问回复成功后先保存文字；Neural 音频失败时返回 `audio_status: "browser_fallback"`，由浏览器使用设备声音播放，不重复请求已经失败的 Neural 路径。
+
 ## 百炼非实时 TTS
 
 当前 provider 请求：

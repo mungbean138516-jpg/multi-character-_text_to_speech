@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "VoxCast 中文小说说话人归属评测",
+  "description": "32 组原创小型样本，覆盖说话人前置、后置、动作提示、身份称谓、轮次推断、代词和嵌套引号。它用于追踪本地规则基线，不是公开语料库或行业基准。",
+  "cases": [
+    {"id": "before-01", "category": "speaker_before", "text": "张三说：“我来晚了。”", "expected_dialogues": [{"text": "我来晚了。", "speaker": "张三"}]},
+    {"id": "before-02", "category": "speaker_before", "text": "林夏问道：“北城的车几点开？”", "expected_dialogues": [{"text": "北城的车几点开？", "speaker": "林夏"}]},
+    {"id": "before-03", "category": "speaker_before", "text": "沈言低声说：“先不要惊动他们。”", "expected_dialogues": [{"text": "先不要惊动他们。", "speaker": "沈言"}]},
+    {"id": "before-04", "category": "speaker_before", "text": "周舟大声喊：“车来了！”", "expected_dialogues": [{"text": "车来了！", "speaker": "周舟"}]},
+    {"id": "before-05", "category": "speaker_before", "text": "许程答道：“我明天给你答复。”", "expected_dialogues": [{"text": "我明天给你答复。", "speaker": "许程"}]},
+
+    {"id": "after-01", "category": "speaker_after", "text": "“别动！”李警官低声说。", "expected_dialogues": [{"text": "别动！", "speaker": "李警官"}]},
+    {"id": "after-02", "category": "speaker_after", "text": "“我可以试试。”陈默答道。", "expected_dialogues": [{"text": "我可以试试。", "speaker": "陈默"}]},
+    {"id": "after-03", "category": "speaker_after", "text": "“这不合逻辑。”苏叶冷冷地说。", "expected_dialogues": [{"text": "这不合逻辑。", "speaker": "苏叶"}]},
+    {"id": "after-04", "category": "speaker_after", "text": "“你也收到信了？”赵明问道。", "expected_dialogues": [{"text": "你也收到信了？", "speaker": "赵明"}]},
+    {"id": "after-05", "category": "speaker_after", "text": "“终于赶上了！”程雨笑道。", "expected_dialogues": [{"text": "终于赶上了！", "speaker": "程雨"}]},
+
+    {"id": "action-01", "category": "action_cue", "text": "林澈笑了笑：“当然可以。”", "expected_dialogues": [{"text": "当然可以。", "speaker": "林澈"}]},
+    {"id": "action-02", "category": "action_cue", "text": "宋宁抬起头：“天快亮了。”", "expected_dialogues": [{"text": "天快亮了。", "speaker": "宋宁"}]},
+    {"id": "action-03", "category": "action_cue", "text": "顾安点了点头：“就按这个方案办。”", "expected_dialogues": [{"text": "就按这个方案办。", "speaker": "顾安"}]},
+    {"id": "action-04", "category": "action_cue", "text": "陆遥推开窗：“雨已经停了。”", "expected_dialogues": [{"text": "雨已经停了。", "speaker": "陆遥"}]},
+    {"id": "action-05", "category": "action_cue", "text": "许佳放下茶杯：“我们重新开始。”", "expected_dialogues": [{"text": "我们重新开始。", "speaker": "许佳"}]},
+
+    {"id": "role-01", "category": "role_alias", "text": "长椅旁的老爷爷抬起头，缓慢地说道：“路还很长。”", "expected_dialogues": [{"text": "路还很长。", "speaker": "老爷爷"}]},
+    {"id": "role-02", "category": "role_alias", "text": "售票窗后的小女孩兴奋地叫道：“火车来啦！”", "expected_dialogues": [{"text": "火车来啦！", "speaker": "小女孩"}]},
+    {"id": "role-03", "category": "role_alias", "text": "门口的老奶奶轻声说：“夜里路滑，慢些走。”", "expected_dialogues": [{"text": "夜里路滑，慢些走。", "speaker": "老奶奶"}]},
+    {"id": "role-04", "category": "role_alias", "text": "一个小男孩挥着车票，笑着说道：“我也看见啦！”", "expected_dialogues": [{"text": "我也看见啦！", "speaker": "小男孩"}]},
+
+    {"id": "turn-01", "category": "turn_taking", "text": "林夏说：“你先走。”陈默答道：“我不走。”“别再犹豫了。”", "expected_dialogues": [{"text": "你先走。", "speaker": "林夏"}, {"text": "我不走。", "speaker": "陈默"}, {"text": "别再犹豫了。", "speaker": "林夏"}]},
+    {"id": "turn-02", "category": "turn_taking", "text": "苏叶问：“是你拿的吗？”周舟说：“不是。”“那会是谁？”", "expected_dialogues": [{"text": "是你拿的吗？", "speaker": "苏叶"}, {"text": "不是。", "speaker": "周舟"}, {"text": "那会是谁？", "speaker": "苏叶"}]},
+    {"id": "turn-03", "category": "turn_taking", "text": "陈默说：“我去开门。”林夏问：“你确定？”“确定。”", "expected_dialogues": [{"text": "我去开门。", "speaker": "陈默"}, {"text": "你确定？", "speaker": "林夏"}, {"text": "确定。", "speaker": "陈默"}]},
+
+    {"id": "pronoun-01", "category": "pronoun", "text": "林夏是个少女。林夏说：“我们出发吧。”她又问道：“地图带了吗？”", "expected_dialogues": [{"text": "我们出发吧。", "speaker": "林夏"}, {"text": "地图带了吗？", "speaker": "林夏"}]},
+    {"id": "pronoun-02", "category": "pronoun", "text": "陈默是个少年。陈默说：“我听见了。”他低声说：“声音从楼上传来。”", "expected_dialogues": [{"text": "我听见了。", "speaker": "陈默"}, {"text": "声音从楼上传来。", "speaker": "陈默"}]},
+
+    {"id": "nested-01", "category": "nested_quotes", "text": "林夏说：“她只留下一句『别回头。』然后就走了。”", "expected_dialogues": [{"text": "她只留下一句『别回头。』然后就走了。", "speaker": "林夏"}]},
+    {"id": "nested-02", "category": "nested_quotes", "text": "陈默说：“他在信上写着『明日见』，但没有署名。”", "expected_dialogues": [{"text": "他在信上写着『明日见』，但没有署名。", "speaker": "陈默"}]},
+    {"id": "ascii-01", "category": "quote_style", "text": "陈默说:\"我们出发。\"", "expected_dialogues": [{"text": "我们出发。", "speaker": "陈默"}]},
+    {"id": "traditional-01", "category": "quote_style", "text": "林夏说：「我來帶路。」", "expected_dialogues": [{"text": "我來帶路。", "speaker": "林夏"}]},
+
+    {"id": "multi-01", "category": "multi_speaker", "text": "林夏说：“把灯打开。”陈默问道：“这盏吗？”许程喊道：“都别动！”", "expected_dialogues": [{"text": "把灯打开。", "speaker": "林夏"}, {"text": "这盏吗？", "speaker": "陈默"}, {"text": "都别动！", "speaker": "许程"}]},
+    {"id": "multi-02", "category": "multi_speaker", "text": "老奶奶说：“慢点。”小男孩叫道：“我知道啦！”林夏笑道：“我会看着他。”", "expected_dialogues": [{"text": "慢点。", "speaker": "老奶奶"}, {"text": "我知道啦！", "speaker": "小男孩"}, {"text": "我会看着他。", "speaker": "林夏"}]},
+    {"id": "narration-01", "category": "no_dialogue", "text": "雨一直下。站台上没有人。", "expected_dialogues": []},
+    {"id": "narration-02", "category": "no_dialogue", "text": "信封上只有一枚褐色邮票，没有收件人。", "expected_dialogues": []}
+  ]
+}

@@ -170,12 +170,20 @@ class WebContractTests(unittest.TestCase):
         javascript = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="characterChatPanel"', html)
         self.assertIn('id="chatMessageInput"', html)
+        self.assertIn('id="cancelChatButton"', html)
+        self.assertIn('id="clearChatButton"', html)
+        self.assertIn('id="replayChatButton"', html)
+        self.assertIn('id="chatGrounding"', html)
+        self.assertIn("不会重复上传整本书", html)
         self.assertIn('requestJson("/api/character-chat"', javascript)
         self.assertIn("function chatContextText()", javascript)
         self.assertIn("function speakCharacterReply", javascript)
         self.assertIn("function playCharacterChatAudio", javascript)
         self.assertIn('requestJson("/api/preview/neural"', javascript)
         self.assertIn("chat_messages", javascript)
+        self.assertIn("new AbortController()", javascript)
+        self.assertIn("result.grounding", javascript)
+        self.assertIn("speakCharacterReply(result.reply, character, false)", javascript)
 
 
 if __name__ == "__main__":

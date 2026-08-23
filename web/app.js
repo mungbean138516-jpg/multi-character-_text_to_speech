@@ -1,7 +1,7 @@
 "use strict";
 
 const DRAFT_KEY = "voxcast.project.v2";
-const DRAFT_VERSION = 6;
+const DRAFT_VERSION = 7;
 const DRAFT_DATABASE = "voxcast-local-projects";
 const DRAFT_STORE = "drafts";
 const DRAFT_RECORD = "active";
@@ -87,6 +87,8 @@ const state = {
   characterRegistry: emptyCharacterRegistry(),
   chatCharacterId: null,
   chatMessages: {},
+  chatGrounding: {},
+  chatRequestController: null,
   chatOpen: false,
 };
 
@@ -147,10 +149,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     "characterChatPanel",
     "chatCharacterSelect",
     "chatAvailability",
+    "chatGrounding",
     "chatTranscript",
     "characterChatForm",
     "chatMessageInput",
     "sendChatButton",
+    "cancelChatButton",
+    "replayChatButton",
+    "clearChatButton",
     "closeChatButton",
     "providerNotice",
     "outputFormat",
@@ -226,6 +232,32 @@ document.addEventListener("DOMContentLoaded", async () => {
   elements.closeChatButton.addEventListener("click", () => {
     state.chatOpen = false;
     renderCharacterChat();
+  });
+  elements.cancelChatButton.addEventListener("click", () => {
+    state.chatRequestController?.abort();
+  });
+  elements.clearChatButton.addEventListener("click", () => {
+    const characterId = state.chatCharacterId;
+    if (!characterId) return;
+    stopAllPreviews();
+    delete state.chatMessages[characterId];
+    delete state.chatGrounding[characterId];
+    renderCharacterChat();
+    scheduleDraftSave();
+  });
+  elements.replayChatButton.addEventListener("click", async () => {
+    const character = state.analysis?.characters.find(
+      (item) => item.id === state.chatCharacterId,
+    );
+    const reply = [...chatMessagesForCharacter(state.chatCharacterId)]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (!character || !reply) return;
+    try {
+      await speakCharacterReply(reply.content, character);
+    } catch (error) {
+      showMessage(error.message || "角色回复暂时无法播放。");
+    }
   });
   elements.chatCharacterSelect.addEventListener("change", () => {
     state.chatCharacterId = elements.chatCharacterSelect.value || null;
@@ -2794,13 +2826,22 @@ function renderCharacterChat() {
   const chatReady = Boolean(state.config?.features?.character_chat);
   elements.chatAvailability.textContent = chatReady
     ? state.config?.providers?.neural?.ready
-      ? "使用千问生成回复，并用该角色的 Neural 声线朗读。"
-      : "使用千问生成回复；播放将使用该角色当前的浏览器试听声线。"
+      ? "使用千问生成回复；Neural 不可用时会自动切换设备声音。"
+      : "使用千问生成回复，并用该角色当前的浏览器试听声线播放。"
     : "配置 DASHSCOPE_API_KEY 与 DASHSCOPE_LLM_BASE_URL 后即可启用角色对话。";
   elements.chatAvailability.classList.toggle("unavailable", !chatReady);
-  elements.chatMessageInput.disabled = !chatReady || state.isSpeaking;
-  elements.sendChatButton.disabled = !chatReady || state.isSpeaking;
+  const chatBusy = Boolean(state.chatRequestController);
+  elements.chatMessageInput.disabled = !chatReady || state.isSpeaking || chatBusy;
+  elements.sendChatButton.disabled = !chatReady || state.isSpeaking || chatBusy;
+  elements.cancelChatButton.hidden = !chatBusy;
   const messages = chatMessagesForCharacter(state.chatCharacterId);
+  const grounding = state.chatGrounding[state.chatCharacterId];
+  elements.chatGrounding.textContent = grounding
+    ? `本次仅发送 ${Number(grounding.selected_characters || 0).toLocaleString()} 字符、${Number(grounding.passage_count || 0)} 个相关片段（原文 ${Number(grounding.source_characters || 0).toLocaleString()} 字符）。`
+    : "每次只在本地选取与角色和问题有关的片段，再发送给千问。";
+  elements.clearChatButton.disabled = !messages.length || chatBusy;
+  elements.replayChatButton.disabled =
+    chatBusy || !messages.some((message) => message.role === "assistant");
   elements.chatTranscript.innerHTML = messages.length
     ? messages
         .map(
@@ -2839,19 +2880,23 @@ async function playCharacterChatAudio(audioUrl, characterId) {
   }
 }
 
-async function speakCharacterReply(text, character) {
-  if (state.config?.providers?.neural?.ready) {
-    const result = await requestJson("/api/preview/neural", {
-      method: "POST",
-      body: JSON.stringify({
-        analysis: state.analysis,
-        character_id: character.id,
-        text,
-      }),
-    });
-    if (!result.audio_url) throw new Error("Neural 声线没有返回音频");
-    await playCharacterChatAudio(result.audio_url, character.id);
-    return;
+async function speakCharacterReply(text, character, allowNeural = true) {
+  if (allowNeural && state.config?.providers?.neural?.ready) {
+    try {
+      const result = await requestJson("/api/preview/neural", {
+        method: "POST",
+        body: JSON.stringify({
+          analysis: state.analysis,
+          character_id: character.id,
+          text,
+        }),
+      });
+      if (!result.audio_url) throw new Error("Neural 声线没有返回音频");
+      await playCharacterChatAudio(result.audio_url, character.id);
+      return;
+    } catch {
+      showMessage("Neural 声线暂时不可用，已自动切换设备声音。", true);
+    }
   }
   if (!("speechSynthesis" in window) || !character) return;
   const presets = new Map(state.config.voices.map((voice) => [voice.id, voice]));
@@ -2886,10 +2931,14 @@ async function sendCharacterChat(event) {
   );
   if (!message || !character || state.isSpeaking) return;
   const history = chatMessagesForCharacter(character.id);
+  const controller = new AbortController();
+  state.chatRequestController = controller;
   setBusy(elements.sendChatButton, true, "正在回答…");
+  renderCharacterChat();
   try {
     const result = await requestJson("/api/character-chat", {
       method: "POST",
+      signal: controller.signal,
       body: JSON.stringify({
         analysis: state.analysis,
         character_id: character.id,
@@ -2903,18 +2952,25 @@ async function sendCharacterChat(event) {
       { role: "user", content: message },
       { role: "assistant", content: result.reply },
     ].slice(-24);
+    state.chatGrounding[character.id] = result.grounding || {};
     elements.chatMessageInput.value = "";
     renderCharacterChat();
     scheduleDraftSave();
     if (result.audio_url) {
       await playCharacterChatAudio(result.audio_url, character.id);
     } else {
-      await speakCharacterReply(result.reply, character);
+      await speakCharacterReply(result.reply, character, false);
     }
   } catch (error) {
-    showMessage(error.message || "角色暂时无法回答，请稍后再试。");
+    if (error.name === "AbortError") {
+      showMessage("已取消这次角色对话。", true);
+    } else {
+      showMessage(error.message || "角色暂时无法回答，请稍后再试。");
+    }
   } finally {
+    state.chatRequestController = null;
     setBusy(elements.sendChatButton, false, "发送并听回复");
+    renderCharacterChat();
   }
 }
 
@@ -3555,6 +3611,7 @@ async function saveDraft() {
     render_job_ids: state.renderJobIds,
     chat_character_id: state.chatCharacterId,
     chat_messages: state.chatMessages,
+    chat_grounding: state.chatGrounding,
     saved_at: savedAt,
   };
   try {
@@ -3624,6 +3681,7 @@ async function restoreDraft() {
         ? project.chat_character_id
         : null;
     state.chatMessages = normalizeChatMessages(project.chat_messages);
+    state.chatGrounding = normalizeChatGrounding(project.chat_grounding);
     if (
       project.analyzer_mode &&
       [...elements.analyzerMode.options].some(
@@ -3835,6 +3893,27 @@ function normalizeChatMessages(value) {
             role: message.role,
             content: message.content.trim().slice(0, 800),
           })),
+      ]),
+  );
+}
+
+function normalizeChatGrounding(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([characterId, summary]) =>
+        characterId.length <= 160 && summary && typeof summary === "object",
+      )
+      .slice(0, 50)
+      .map(([characterId, summary]) => [
+        characterId,
+        {
+          source_characters: Math.max(0, Number(summary.source_characters) || 0),
+          selected_characters: Math.max(0, Number(summary.selected_characters) || 0),
+          passage_count: Math.max(0, Number(summary.passage_count) || 0),
+          keyword_count: Math.max(0, Number(summary.keyword_count) || 0),
+          truncated: Boolean(summary.truncated),
+        },
       ]),
   );
 }
