@@ -248,6 +248,7 @@ def _compact_evidence(value: str) -> str:
 def _clean_candidate(raw: str) -> str | None:
     candidate = raw.strip(" ，。！？；：\n")
     candidate = re.sub(r"^(?:那|这|只见|身后的|门口的|面前的)", "", candidate)
+    candidate = re.sub(r"^(他|她|它)(?:又|也|还|再)$", r"\1", candidate)
     if not candidate or candidate in NAME_STOPWORDS:
         return None
     if candidate.endswith("地"):

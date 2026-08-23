@@ -177,6 +177,12 @@
         </div>
         <div id="characterGrid" class="character-grid"></div>
 
+        <details class="creative-lab">
+          <summary>
+            <span>高级创作工具</span>
+            <small>全书一致性、情绪曲线与声线相似度</small>
+          </summary>
+          <div class="creative-lab-body">
         <section class="intelligence-panel">
           <div class="tool-heading">
             <div>
@@ -215,6 +221,8 @@
           <div id="voiceSamples" class="voice-samples"></div>
           <div id="voiceSimilarityResults" class="quality-results">至少为两个角色选择 WAV、MP3 或 M4A 试听音频。</div>
         </section>
+          </div>
+        </details>
 
         <section id="pronunciationPanel" class="pronunciation-panel">
           <div class="pronunciation-heading">
@@ -282,19 +290,25 @@
             <div class="character-chat-heading">
               <div>
                 <strong>和角色聊聊</strong>
-                <span>回复参考已导入的全文，并用该角色的试听声线读出；启用后会把角色上下文与提问发送至已配置的千问服务。</span>
+                <span>每次只选取与当前角色和问题相关的原文片段，发送至已配置的千问服务；不会重复上传整本书。</span>
               </div>
               <label class="inline-field">
                 <span>正在对话</span>
                 <select id="chatCharacterSelect" aria-label="对话角色"></select>
               </label>
-              <button id="closeChatButton" class="text-button subtle" type="button">收起</button>
+              <div class="chat-heading-actions">
+                <button id="replayChatButton" class="text-button subtle" type="button">重播回复</button>
+                <button id="clearChatButton" class="text-button subtle" type="button">清空</button>
+                <button id="closeChatButton" class="text-button subtle" type="button">收起</button>
+              </div>
             </div>
             <div id="chatAvailability" class="chat-availability"></div>
+            <div id="chatGrounding" class="chat-grounding">还没有发送内容。</div>
             <div id="chatTranscript" class="chat-transcript" aria-live="polite"></div>
             <form id="characterChatForm" class="character-chat-form">
               <label class="sr-only" for="chatMessageInput">对角色说的话</label>
               <input id="chatMessageInput" type="text" maxlength="600" placeholder="例如：你为什么决定去北城？" autocomplete="off" />
+              <button id="cancelChatButton" class="secondary-button compact" type="button" hidden>取消</button>
               <button id="sendChatButton" class="primary-button compact" type="submit"><span>发送并听回复</span></button>
             </form>
           </section>
@@ -431,7 +445,7 @@
     </main>
 
     <footer>
-      <span>声场 VoxCast · Alpha 0.9</span>
+      <span>声场 VoxCast · Alpha 0.10</span>
       <span>AI 自动选角，你随时可以纠正。</span>
     </footer>
 

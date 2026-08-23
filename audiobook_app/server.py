@@ -14,6 +14,7 @@ from uuid import uuid4
 from . import __version__
 from .analyzer import HeuristicNovelAnalyzer
 from .audio import build_render_plan, mp3_is_available, render_audiobook
+from .chat import build_chat_context
 from .epub import parse_epub
 from .document_import import parse_document
 from .directing import consistency_check, direct_text
@@ -51,6 +52,10 @@ MAX_RENDER_CHARACTERS = int(os.getenv("APP_MAX_RENDER_CHARACTERS", "20000"))
 MAX_RENDER_SEGMENTS = int(os.getenv("APP_MAX_RENDER_SEGMENTS", "120"))
 MAX_CHAT_SOURCE_CHARACTERS = int(
     os.getenv("APP_MAX_CHAT_SOURCE_CHARACTERS", "200000")
+)
+MAX_CHAT_CONTEXT_CHARACTERS = max(
+    1_500,
+    min(30_000, int(os.getenv("APP_MAX_CHAT_CONTEXT_CHARACTERS", "12000"))),
 )
 MAX_CHAT_MESSAGE_CHARACTERS = 600
 MAX_PRIMARY_CHARACTERS = max(
@@ -241,6 +246,7 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                         "primary_characters": MAX_PRIMARY_CHARACTERS,
                         "render_characters": MAX_RENDER_CHARACTERS,
                         "render_segments": MAX_RENDER_SEGMENTS,
+                        "chat_context_characters": MAX_CHAT_CONTEXT_CHARACTERS,
                     },
                     "imports": {
                         "txt": True,
@@ -695,8 +701,16 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
             content = str(item.get("content", "")).strip()
             if role in {"user", "assistant"} and content:
                 history.append({"role": role, "content": content[:800]})
+        context = build_chat_context(
+            source_text,
+            character,
+            user_message,
+            max_characters=MAX_CHAT_CONTEXT_CHARACTERS,
+        )
+        if not context.text:
+            raise ValueError("原文中没有可用于角色对话的内容")
         reply = chat_with_character(
-            source_text=source_text,
+            source_text=context.text,
             character=character,
             user_message=user_message,
             history=history,
@@ -738,6 +752,8 @@ class AudiobookRequestHandler(BaseHTTPRequestHandler):
                 "character_name": character.name,
                 "reply": reply,
                 "audio_url": audio_url,
+                "audio_status": "ready" if audio_url else "browser_fallback",
+                "grounding": context.public_summary(),
             }
         )
 

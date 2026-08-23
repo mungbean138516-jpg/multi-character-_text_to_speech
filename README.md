@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml/badge.svg)](https://github.com/mungbean138516-jpg/multi-character-_text_to_speech/actions/workflows/ci.yml)
 
-当前版本是可实际试用的 `0.9 Curated Voice Preview Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
+当前版本是可实际试用的 `0.10 Interaction & Product Quality Alpha`。它不训练 TTS 模型，而是把大模型、角色一致性、多家语音服务、音频拼接和播放器整合成普通人会用的产品：
 
 ```mermaid
 flowchart LR
@@ -52,6 +52,10 @@ flowchart LR
 - 全书一致性扫描可发现同一角色的年龄、性别、声音与人物特征在章节间漂移。
 - 本地规则导演根据标点、短句、低声、怒吼、沉默和长段描写生成节奏、能量与停顿建议。
 - 三维情绪曲线可批量编辑效价、唤醒强度和控制感；角色标准试听音频可生成本地相似度矩阵。
+- 配置千问后可与已识别角色对话；服务端每次只选取与角色和问题相关的原文片段，页面显示实际发送字数，不重复上传整本书。
+- 角色对话支持取消请求、分角色清空记录和重播回复；Neural 语音不可用时自动降级到设备声音，文字回复不丢失。
+- 一致性、情绪和声线相似度收进“高级创作工具”，不再打断上传、识别、试听、纠错和生成的主路径。
+- 独立说话人归属评测集覆盖 32 组原创样本、42 句对白；当前本地基线的对白检测 F1 为 100%，说话人联合归属 F1 为 95.2%，已知失败样本随报告公开。
 
 ## Mac 最简单：下载后双击
 
@@ -68,12 +72,30 @@ flowchart LR
 启动，下次联网后双击会自动重试。macOS 第一次拦截时，请右键文件并选择
 “打开”。
 
+## Windows 快速启动
+
+安装 Python 3.10+ 并勾选 **Add Python to PATH**，下载解压后在项目目录打开 PowerShell，运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Start-VoxCast.ps1
+```
+
+启动器自动创建 `.voxcast-venv`、安装可选 Neural 声线并打开浏览器，不需要管理员权限。
+
+## Linux 快速启动
+
+```bash
+./Start-VoxCast.sh
+```
+
+如果文件权限在解压时丢失，先运行 `chmod +x Start-VoxCast.sh`。
+
 ## 终端启动
 
 ```bash
 git clone https://github.com/mungbean138516-jpg/multi-character-_text_to_speech.git
 cd multi-character-_text_to_speech
-python3 -m pip install edge-tts miniaudio
+python3 -m pip install -e ".[neural]"
 python3 -m audiobook_app
 ```
 
@@ -172,6 +194,7 @@ Authorization: Bearer <DASHSCOPE_API_KEY>
 ```text
 audiobook_app/
   analyzer.py       离线文本分段与说话人基线
+  chat.py           角色对话的本地相关片段选取
   epub.py           安全 EPUB 解包、书脊解析与章节拆分
   books.py          书籍项目与章节数据合同
   registry.py       跨章节角色一致性与主要角色上限
@@ -192,6 +215,7 @@ web/
   styles.css        响应式界面
   app.js            角色纠错、浏览器试听、生成控制
 tests/              全离线单元测试
+evals/              独立说话人归属评测集与报告脚本
 examples/           原创演示文本
 docs/               PRD、架构、路线、演示与 Qoder 记录
 ```
@@ -207,6 +231,7 @@ docs/               PRD、架构、路线、演示与 Qoder 记录
 | `POST` | `/api/consistency-check` | 扫描已分析章节中的角色特征漂移 |
 | `POST` | `/api/direct` | 为朗读片段生成本地规则导演参数 |
 | `POST` | `/api/analyze` | 文本 → 角色卡与台词轨道 |
+| `POST` | `/api/character-chat` | 相关原文片段 + 角色卡 → 角色回复与可选语音 |
 | `POST` | `/api/render/plan` | 生成前统计缓存、请求、计费字符与可选费用 |
 | `POST` | `/api/render/segment` | 只重新生成指定的一句并写入内容缓存 |
 | `POST` | `/api/render/jobs` | 创建后台章节生成任务 |
@@ -221,10 +246,13 @@ docs/               PRD、架构、路线、演示与 Qoder 记录
 
 ```bash
 python3 -m unittest discover -s tests -v
+python3 evals/run_speaker_eval.py
 python3 -m compileall -q audiobook_app
 ```
 
 当前自动化测试不访问公网、不消耗 API 额度，覆盖：
+
+> 工程回归共 93 项；产品质量另用 32 组说话人样本、42 句对白独立报告，不把两类数字混为一个“测试通过数”。
 
 - 前置、后置和动作式说话人；
 - 嵌套、同型嵌套、未闭合和英文引号；
@@ -246,6 +274,9 @@ python3 -m compileall -q audiobook_app
 - 5 个免费角色声线、灰色高级声线、24 个供应商音色的唯一性与模型版本约束；
 - 设备声音效果音规避、Neural 成人原生音高、轻微童声参数与角色试听、Mac 本地中文语音转换；
 - 调用前的字符限额。
+- 角色对话相关片段选取、硬字符上限、取消 / 清空 / 重播入口与语音降级合同；
+- Windows / Linux / Mac 启动器的项目内隔离、无管理员权限和健康检查；
+- 32 组说话人归属评测的类别覆盖与 90% 联合 F1 回归底线。
 
 ## 稳定演示
 
@@ -265,7 +296,8 @@ PPT 按当前安排继续暂缓，等进入路演制作阶段再从真实 Demo �
 - 脚本连续试听、逐句试听、角色卡试听和完整生成优先使用同一套 Neural 声线与缓存；只有 Neural 包不可用时才回退设备声音。
 - 免费版不提供独立老人声线；老年角色使用自然成年声兜底。更多年龄、方言和定制音色需要接入有商业协议的高级 TTS。
 - 免费 Neural 声线包需要联网，属于免 Key 的实验性适配器；上游服务变化时可能暂时不可用，不能替代正式商业 TTS 合同。
-- Mac 免费生成依赖系统自带的 `say`、`afconvert` 和至少一个已下载的中文声音；其他操作系统仍可使用浏览器试听或连接 CosyVoice。
+- Mac 免费本地生成依赖系统自带的 `say`、`afconvert` 和至少一个已下载的中文声音；Windows 与 Linux 可用各自启动器进入网页，并使用 Neural、浏览器试听或 CosyVoice。
+- 角色对话需要服务端千问配置；它只发送相关片段，但仍属于向已配置外部服务传输文本，页面会明示。
 - 当前已有 EPUB、多章项目、跨章角色记忆、全书发音记忆、单句重做、后台章节任务、首批播放、暂停 / 继续、WAV / 可选 MP3、片段缓存和失败补齐。
 - 跨章角色一致性只依据明确姓名和用户保存的别名；不再增加额外的人物关系推断功能。
 - 刷新浏览器可以接回任务；如果整个 Python 服务进程重启，已生成片段仍可播放，但任务需要重新提交。

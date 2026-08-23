@@ -71,6 +71,14 @@ class HeuristicNovelAnalyzerTests(unittest.TestCase):
         )
         self.assertEqual(profile.age_group, "unknown")
 
+    def test_pronoun_with_turn_adverb_resolves_to_recent_character(self) -> None:
+        rows = self.dialogue_rows(
+            "林夏是个少女。林夏说：“我们出发吧。”"
+            "她又问道：“地图带了吗？”"
+        )
+
+        self.assertEqual([row[0] for row in rows], ["林夏", "林夏"])
+
     def test_nested_chinese_quotes_remain_one_dialogue(self) -> None:
         rows = self.dialogue_rows(
             "林夏说：“她只留下一句『别回头。』然后就走了。”"
